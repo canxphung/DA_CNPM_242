@@ -1,0 +1,27 @@
+# Thiết lập xử lý line endings
+* text=auto
+
+# Python dùng LF (Unix style)
+*.py text eol=lf
+
+# Go dùng LF
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+
+# Shell script dùng LF
+*.sh text eol=lf
+
+# Dockerfile dùng LF
+Dockerfile text eol=lf
+**/Dockerfile text eol=lf
+
+# JSON và ENV dùng LF
+*.json text eol=lf
+*.env text eol=lf
+
+# YAML dùng LF
+*.yml text eol=lf
+
+# Markdown dùng LF
+*.md text eol=lf
