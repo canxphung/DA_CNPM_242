@@ -1,0 +1,58 @@
+{
+  "tomato": {
+    "name": "Cà chua",
+    "water_need_factor": 1.2,
+    "optimal_soil_moisture": 65,
+    "drought_tolerance": 0.4,
+    "description": "Cây cà chua cần độ ẩm đất trung bình đến cao, tránh tưới lên lá."
+  },
+  "cucumber": {
+    "name": "Dưa chuột",
+    "water_need_factor": 1.3,
+    "optimal_soil_moisture": 70,
+    "drought_tolerance": 0.3,
+    "description": "Dưa chuột cần nhiều nước, nhưng không nên để đất quá ẩm ướt."
+  },
+  "lettuce": {
+    "name": "Xà lách",
+    "water_need_factor": 1.0,
+    "optimal_soil_moisture": 60,
+    "drought_tolerance": 0.2,
+    "description": "Xà lách cần độ ẩm đất đều đặn, thích hợp với tưới nhỏ giọt."
+  },
+  "pepper": {
+    "name": "Ớt",
+    "water_need_factor": 0.8,
+    "optimal_soil_moisture": 55,
+    "drought_tolerance": 0.6,
+    "description": "Ớt ưa khô hơn các loại rau khác, tránh tưới quá nhiều."
+  },
+  "basil": {
+    "name": "Húng quế",
+    "water_need_factor": 0.9,
+    "optimal_soil_moisture": 60,
+    "drought_tolerance": 0.5,
+    "description": "Húng quế cần độ ẩm trung bình, tránh để đất quá ướt."
+  },
+  "mint": {
+    "name": "Bạc hà",
+    "water_need_factor": 1.1,
+    "optimal_soil_moisture": 65,
+    "drought_tolerance": 0.4,
+    "description": "Bạc hà thích đất ẩm, nhưng có khả năng phục hồi tốt sau khi bị khô."
+  },
+  "eggplant": {
+    "name": "Cà tím",
+    "water_need_factor": 1.1,
+    "optimal_soil_moisture": 65,
+    "drought_tolerance": 0.5,
+    "description": "Cà tím cần nước đều đặn, đặc biệt trong giai đoạn ra quả."
+  },
+  "default": {
+    "name": "Mặc định",
+    "water_need_factor": 1.0,
+    "optimal_soil_moisture": 60,
+    "drought_tolerance": 0.5,
+    "description": "Cấu hình mặc định cho hầu hết các loại cây trồng."
+  }
+}

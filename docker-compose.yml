@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  ai_service:
+    build: ./AI_service
+    container_name: ai_service
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./AI_service:/app
+      - ai_service_data:/app/data
+    env_file:
+      - ./AI_service/.env
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - iot_network
+    restart: unless-stopped
+
+  api_gateway:
+    build: ./api_gateway
+    container_name: api_gateway
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./api_gateway:/app
+    env_file:
+      - ./api_gateway/.env
+    depends_on:
+      - ai_service
+      - data_processor
+      - user_auth_service
+    networks:
+      - iot_network
+    restart: unless-stopped
+
+  data_processor:
+    build: ./data_processor
+    container_name: data_processor
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./data_processor:/app
+      - data_processor_logs:/app/logs
+    env_file:
+      - ./data_processor/.env
+    depends_on:
+      - redis
+      - firebase
+    networks:
+      - iot_network
+    restart: unless-stopped
+
+  user_auth_service:
+    build: ./user_auth_service
+    container_name: user_auth_service
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./user_auth_service:/app
+    env_file:
+      - ./user_auth_service/.env
+    depends_on:
+      - mongodb
+    networks:
+      - iot_network
+    restart: unless-stopped
+
+  # Các services hỗ trợ
+  redis:
+    image: redis:alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - iot_network
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-iot_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - iot_network
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-password}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-auth_db}
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - iot_network
+    restart: unless-stopped
+
+  firebase:
+    image: mtlynch/firebase-emulator
+    container_name: firebase
+    ports:
+      - "9000:9000"
+      - "9099:9099"
+    networks:
+      - iot_network
+    restart: unless-stopped
+
+networks:
+  iot_network:
+    driver: bridge
+
+volumes:
+  ai_service_data:
+  data_processor_logs:
+  redis_data:
+  postgres_data:
+  mongodb_data:
