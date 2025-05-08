@@ -20,6 +20,7 @@ _test
 _testmain.go
 
 *.env
+.env
 
 /VERSION.cache
 /bin/
