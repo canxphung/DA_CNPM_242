@@ -10,6 +10,7 @@ import (
 type CoreOperationHandler struct {
 	serviceProxy *proxy.ServiceProxy
 	logger       *zap.Logger
+	serviceURL   string
 }
 
 // NewCoreOperationHandler creates a new core operation handler
@@ -22,6 +23,7 @@ func NewCoreOperationHandler(serviceURL string, logger *zap.Logger) (*CoreOperat
 	return &CoreOperationHandler{
 		serviceProxy: serviceProxy,
 		logger:       logger,
+		serviceURL:   serviceURL,
 	}, nil
 }
 
@@ -29,4 +31,8 @@ func NewCoreOperationHandler(serviceURL string, logger *zap.Logger) (*CoreOperat
 func (h *CoreOperationHandler) RegisterRoutes(router *mux.Router) {
 	// All core operation endpoints require authentication (handled by middleware)
 	router.PathPrefix("/core-operation/").Handler(h.serviceProxy)
+
+	h.logger.Info("Core Operation routes registered",
+		zap.String("service_url", h.serviceURL),
+	)
 }

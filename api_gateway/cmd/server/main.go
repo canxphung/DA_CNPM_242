@@ -50,26 +50,46 @@ func main() {
 	// Create logging middleware
 	loggingMiddleware := middleware.NewLoggingMiddleware(logger)
 
+	// Create CORS middleware
+	corsMiddleware := middleware.NewCORSMiddleware([]string{
+		"http://localhost:5173", // Vite default dev server
+		"http://localhost:3000", // Create React App default
+		"http://localhost:3001", // Alternative port
+		"*",                     // Allow all origins in development
+	})
+
 	// Create router
 	router := mux.NewRouter()
 
-	// Apply common middleware
+	// Apply common middleware - ORDER IS IMPORTANT!
+	// CORS must come first to handle preflight requests
+	router.Use(corsMiddleware.EnableCORS)
 	router.Use(loggingMiddleware.LogRequest)
 	router.Use(metricsMiddleware.CollectMetrics)
-	router.Use(authMiddleware.Authenticate)
 
-	// Health check endpoint
+	// Create API v1 subrouter
+	apiV1 := router.PathPrefix("/api/v1").Subrouter()
+	apiV1.Use(authMiddleware.Authenticate)
+
+	// Health check endpoint (không cần auth)
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `{"status":"healthy"}`)
 	}).Methods("GET")
 
-	// Metrics endpoint
+	// Metrics endpoint (không cần auth)
 	router.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 
-	// Setup service handlers
-	setupServiceHandlers(router, cfg, logger)
+	// API v1 health check (không cần auth)
+	router.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"status":"healthy","version":"v1"}`)
+	}).Methods("GET")
+
+	// Setup service handlers với API v1 prefix
+	setupServiceHandlers(apiV1, cfg, logger)
 
 	// Create HTTP server
 	server := &http.Server{

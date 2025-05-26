@@ -91,8 +91,8 @@ func LoadConfig() *Config {
 	// Map environment variables to config fields
 	viper.BindEnv("server.port", "GATEWAY_PORT")
 	viper.BindEnv("services.userAuthServiceURL", "USER_AUTH_SERVICE_URL")
-viper.BindEnv("services.coreOperationServiceURL", "CORE_OPERATION_SERVICE_URL")
-viper.BindEnv("services.aiServiceURL", "AI_SERVICE_URL")
+	viper.BindEnv("services.coreOperationServiceURL", "CORE_OPERATION_SERVICE_URL")
+	viper.BindEnv("services.aiServiceURL", "AI_SERVICE_URL")
 	viper.BindEnv("jwt.secretKey", "JWT_SECRET_KEY")
 
 	// Try to read the config file
