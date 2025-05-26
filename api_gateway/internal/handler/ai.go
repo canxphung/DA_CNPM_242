@@ -10,6 +10,7 @@ import (
 type AIHandler struct {
 	serviceProxy *proxy.ServiceProxy
 	logger       *zap.Logger
+	serviceURL   string
 }
 
 // NewAIHandler creates a new AI handler
@@ -22,6 +23,7 @@ func NewAIHandler(serviceURL string, logger *zap.Logger) (*AIHandler, error) {
 	return &AIHandler{
 		serviceProxy: serviceProxy,
 		logger:       logger,
+		serviceURL:   serviceURL,
 	}, nil
 }
 
@@ -29,4 +31,8 @@ func NewAIHandler(serviceURL string, logger *zap.Logger) (*AIHandler, error) {
 func (h *AIHandler) RegisterRoutes(router *mux.Router) {
 	// All AI endpoints require authentication (handled by middleware)
 	router.PathPrefix("/ai/").Handler(h.serviceProxy)
+
+	h.logger.Info("AI routes registered",
+		zap.String("service_url", h.serviceURL),
+	)
 }
