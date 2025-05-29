@@ -94,22 +94,23 @@ class GreenhouseAIService:
         
         logger.info("Greenhouse AI Service started successfully")
     
-    def stop(self):
+    async def stop(self): # <--- THAY ĐỔI 1: Chuyển thành async def
         """
         Stop the service and any background tasks.
         """
         if not self.is_running:
             logger.warning("Service is not running")
             return
-        
+
         logger.info("Stopping Greenhouse AI Service")
         self.is_running = False
-        
+
         # Close any active connections
         if hasattr(self.core_ops_integration, 'close') and callable(self.core_ops_integration.close):
-            asyncio.run(self.core_ops_integration.close())
-        
+            await self.core_ops_integration.close() # <--- THAY ĐỔI 2: Sử dụng await
+
         logger.info("Greenhouse AI Service stopped successfully")
+
     
     async def process_sensor_data(self, sensor_data):
         """
@@ -124,8 +125,8 @@ class GreenhouseAIService:
         logger.info(f"Processing sensor data: {sensor_data}")
         
         # Save sensor data to database
-        session = get_db_session()
-        try:
+        with get_db_session() as session:
+        
             SensorData.create(
                 session=session,
                 soil_moisture=sensor_data.get('soil_moisture'),
@@ -133,8 +134,6 @@ class GreenhouseAIService:
                 humidity=sensor_data.get('humidity'),
                 light_level=sensor_data.get('light_level')
             )
-        finally:
-            session.close()
         
         # Get irrigation decision using decision engine (but don't control pump directly)
         decision = self.decision_engine.get_irrigation_decision(sensor_data)
@@ -538,8 +537,8 @@ class GreenhouseAIService:
         Returns:
             Dictionary with sensor readings
         """
-        session = get_db_session()
-        try:
+        with get_db_session() as session:
+        
             latest = SensorData.get_latest(session)
             
             if latest:
@@ -559,8 +558,7 @@ class GreenhouseAIService:
                     'light_level': None,
                     'timestamp': None
                 }
-        finally:
-            session.close()
+        
     
     async def _get_system_status(self):
         """

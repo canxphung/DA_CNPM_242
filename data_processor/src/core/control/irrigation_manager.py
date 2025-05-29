@@ -50,7 +50,10 @@ class IrrigationManager:
         # Biến theo dõi trạng thái
         self.background_thread = None
         self.is_running = False
-        self.check_interval = 60  # Kiểm tra mỗi 60 giây
+        
+        # Lấy interval từ cấu hình mới
+        self.check_interval = self.config.get_interval('auto_decision', 900)
+        logger.info(f"IrrigationManager initialized with check interval: {self.check_interval}s")
         
         # Đồng bộ trạng thái
         self._initialized = True

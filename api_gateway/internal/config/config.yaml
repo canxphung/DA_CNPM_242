@@ -1,0 +1,28 @@
+# API Gateway Configuration
+server:
+  port: "3000"
+  readTimeout: "15s"
+  writeTimeout: "15s"
+  shutdownTimeout: "5s"
+
+services:
+  userAuthServiceURL: "http://localhost:8001"
+  coreOperationServiceURL: "http://localhost:8002"
+  aiServiceURL: "http://localhost:8003"
+
+jwt:
+  secretKey: "your-secret-key-here-change-this-in-production"
+  expirationMinutes: 30
+  refreshExpirationHours: 24
+
+logging:
+  level: "debug"
+  format: "console"
+
+# CORS Configuration (optional - can be added to config struct)
+cors:
+  allowedOrigins:
+    - "http://localhost:5173"
+    - "http://localhost:3000"
+    - "http://localhost:3001"
+    - "*"  # Remove this in production

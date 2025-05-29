@@ -55,7 +55,13 @@ class IrrigationScheduler:
         self.schedules = []
         self.background_thread = None
         self.is_running = False
-        self.check_interval = 60  # Kiểm tra mỗi 60 giây
+        
+        # Lấy interval từ cấu hình
+        # Đây là điểm quan trọng: chúng ta sử dụng interval riêng cho schedule check
+        # Điều này cho phép kiểm tra lịch tưới thường xuyên hơn (60s) 
+        # mà không ảnh hưởng đến các tác vụ khác
+        self.check_interval = self.config.get_interval('schedule_check', 60)
+        logger.info(f"IrrigationScheduler initialized with check interval: {self.check_interval}s")
         
         # Đọc lịch tưới từ storage
         self.load_schedules()

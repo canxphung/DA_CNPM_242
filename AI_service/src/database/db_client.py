@@ -3,6 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 import sys
+from contextlib import contextmanager
 
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -17,13 +18,14 @@ Session = sessionmaker(bind=engine)
 # Create a base class for declarative models
 Base = declarative_base()
 
+@contextmanager
 def get_db_session():
-    """
-    Create a new database session.
-    """
-    db = Session()
+    session = Session()
     try:
-        yield db
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
-        db.close()
-    return db
+        session.close()

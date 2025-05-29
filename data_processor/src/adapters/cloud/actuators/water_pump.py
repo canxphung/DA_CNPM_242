@@ -56,7 +56,18 @@ class WaterPumpController:
         self.min_interval = int(self.config.get('control.water_pump.min_interval', 3600))  # giây
         
         # Các giá trị có thể cấu hình
+        # Các giá trị có thể cấu hình
         self.water_rate = float(self.config.get('control.water_pump.water_rate', 0.5))  # lít/giây
+        
+        # Interval cho việc sync trạng thái với Adafruit
+        # Đây là một cải tiến quan trọng: trước đây không có monitoring riêng
+        # Giờ chúng ta có thể kiểm tra trạng thái máy bơm thường xuyên hơn
+        self.sync_interval = self.config.get_interval('pump_sync', 15)
+        
+        # Biến để theo dõi monitoring thread
+        self._monitoring = False
+        self._monitor_thread = None
+        self._last_logged_state = None
         
         # Trạng thái hiện tại
         self._current_state = {
@@ -129,12 +140,12 @@ class WaterPumpController:
             adafruit_state = self.adafruit_client.get_actuator_state(self.feed_key)
             
             if adafruit_state is None:
-                logger.warning("Could not get pump state from Adafruit")
+                logger.warning("Could not get pump state from Adafruit for sync")
                 return
-                
-            # Nếu trạng thái không khớp, cập nhật trạng thái máy bơm
-            if adafruit_state != self._current_state["is_on"]:
-                logger.warning(f"Pump state mismatch: Redis={self._current_state['is_on']}, Adafruit={adafruit_state}")
+            
+            initial_local_is_on = self._current_state["is_on"] # Capture initial state for logging
+            if adafruit_state != initial_local_is_on:
+                logger.warning(f"Pump state mismatch: Redis={initial_local_is_on}, Adafruit={adafruit_state}")
                 
                 if adafruit_state:
                     # Máy bơm đang bật trong Adafruit nhưng tắt trong Redis
@@ -142,7 +153,7 @@ class WaterPumpController:
                         self._current_state["start_time"] = datetime.now()
                         
                     self._current_state["is_on"] = True
-                    logger.info("Synced pump state: Turned ON in local state")
+                    logger.info("Synced pump state: Updated local state to ON based on Adafruit")
                 else:
                     # Máy bơm đang tắt trong Adafruit nhưng bật trong Redis
                     if self._current_state["is_on"] and self._current_state["start_time"]:
@@ -151,9 +162,14 @@ class WaterPumpController:
                     self._current_state["is_on"] = False
                     self._current_state["start_time"] = None
                     self._current_state["scheduled_stop_time"] = None
-                    logger.info("Synced pump state: Turned OFF in local state")
+                    logger.info("Synced pump state: Updated local state to OFF based on Adafruit")
                     
-                self._save_state()
+                if not self._save_state():
+                    logger.error(
+                        f"During state sync (Adafruit: {adafruit_state}, Previous local: {initial_local_is_on}), "
+                        "failed to persist updated state to Redis. "
+                        "In-memory state is updated, but Redis may be inconsistent."
+                    )
                 
         except Exception as e:
             logger.error(f"Error syncing state with Adafruit: {str(e)}")
@@ -423,10 +439,10 @@ class WaterPumpController:
         try:
             adafruit_state = self.adafruit_client.get_actuator_state(self.feed_key)
             status["adafruit_state"] = adafruit_state
-            status["state_synced"] = (adafruit_state == status["is_on"])
+            status["state_synced"] = (adafruit_state == status["is_on"]) # status["is_on"] is already the synced state
         except Exception:
             status["adafruit_state"] = None
-            status["state_synced"] = False
+            status["state_synced"] = False # If Adafruit can't be reached, we can't confirm sync
             
         return status
     
@@ -479,11 +495,13 @@ class WaterPumpController:
         try:
             # Thử lấy từ Redis trước (nhanh hơn)
             history_key = f"{self.redis_key_prefix}history"
-            events = self.redis_client.redis.lrange(history_key, 0, limit - 1)
+            events_json = self.redis_client.redis.lrange(history_key, 0, limit - 1)
             
-            if events:
+            if events_json:
                 # Chuyển đổi từ JSON
-                return [json.loads(event) for event in events]
+                # redis lrange returns list of strings (or bytes if decode_responses=False)
+                # Assuming redis_client.redis is a raw redis client and might return bytes or already decoded strings
+                return [json.loads(event_str) for event_str in events_json]
             
             # Nếu không có trong Redis, lấy từ Firebase
             return self.firebase_client.get_irrigation_history(limit)
@@ -524,8 +542,8 @@ class WaterPumpController:
             stats["water_used_last_24h"] = sum(event["water_amount_liters"] for event in events_24h)
             
             # Tính trung bình
-            if history:
-                stats["avg_duration_per_event"] = sum(event["duration_seconds"] for event in history) / len(history)
-                stats["avg_water_per_event"] = sum(event["water_amount_liters"] for event in history) / len(history)
+            if history: # This 'if history:' is redundant because it's inside 'if history:'
+                stats["avg_duration_per_event"] = sum(event["duration_seconds"] for event in history) / len(history) if len(history) > 0 else 0
+                stats["avg_water_per_event"] = sum(event["water_amount_liters"] for event in history) / len(history) if len(history) > 0 else 0
             
         return stats

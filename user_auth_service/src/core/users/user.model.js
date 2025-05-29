@@ -144,11 +144,20 @@ userSchema.methods.hasRole = function(roleName) {
     
     return this.roles.some(role => role.name === roleName && role.isActive);
 };
+userSchema.methods.addRefreshToken = function(token, expiresAt) {
+  if (!this.refreshTokens) {
+    this.refreshTokens = [];
+  }
+  this.refreshTokens.push({ token, expiresAt });
+  return this.save();
+};
 
 // Phương thức lấy tên đầy đủ
 userSchema.virtual('fullName').get(function() {
   return `${this.firstName} ${this.lastName}`;
 });
+// Thêm refresh token mới cho user
+
 
 // Tạo model từ schema
 const User = mongoose.model('User', userSchema);

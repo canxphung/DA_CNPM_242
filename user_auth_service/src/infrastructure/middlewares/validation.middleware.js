@@ -214,9 +214,37 @@ const addPermissionToRoleRules = [
   
   validate
 ];
+// validation.middleware.js - Thêm rules này
+const registerRules = [
+  body('email')
+    .isEmail().withMessage('Email không hợp lệ')
+    .normalizeEmail()
+    .notEmpty().withMessage('Email là bắt buộc'),
+  
+  body('password')
+    .isLength({ min: 8 }).withMessage('Mật khẩu phải có ít nhất 8 ký tự')
+    .matches(/[A-Z]/).withMessage('Mật khẩu phải có ít nhất 1 chữ hoa')
+    .matches(/[a-z]/).withMessage('Mật khẩu phải có ít nhất 1 chữ thường')
+    .matches(/[0-9]/).withMessage('Mật khẩu phải có ít nhất 1 số'),
+  
+  body('firstName')
+    .notEmpty().withMessage('Tên là bắt buộc')
+    .isString().withMessage('Tên phải là chuỗi')
+    .trim(),
+  
+  body('lastName')
+    .notEmpty().withMessage('Họ là bắt buộc')
+    .isString().withMessage('Họ phải là chuỗi')
+    .trim(),
+  
+  validate
+];
+
+// Export các rules và middleware
 
 module.exports = {
   validate,
+  registerRules,
   createUserRules,
   updateUserRules,
   changePasswordRules,

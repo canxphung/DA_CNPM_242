@@ -13,6 +13,9 @@ def setup_logging():
     
     # Cấu hình logger chính
     logger = logging.getLogger()
+    # Xóa handlers cũ để tránh duplicate
+    logger.handlers.clear()
+    
     logger.setLevel(logging.INFO)
     
     # Định dạng log

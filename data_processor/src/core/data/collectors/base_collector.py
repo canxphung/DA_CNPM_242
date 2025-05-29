@@ -1,3 +1,4 @@
+
 """
 Lớp cơ sở cho các bộ thu thập dữ liệu cảm biến.
 """
@@ -6,6 +7,9 @@ import time
 from typing import Dict, Any, Optional, List, Union, Type, TypeVar, Generic
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
+# Import json for use in get_recent_readings_from_cache, though Pydantic's parse_raw handles it.
+# It's already used in get_recent_readings_from_cache.
+import json 
 
 from src.core.data.models import (
     SensorReading, 
@@ -192,9 +196,10 @@ class BaseCollector(Generic[T], ABC):
             
             # Lưu giá trị với thời gian hết hạn
             expiration = self.config.get('redis.default_expiration', 3600)  # 1 giờ mặc định
-            self.redis_client.set(cache_key, reading.dict(), expiration)
+            # MODIFIED: Store as JSON string to ensure datetime is serialized correctly
+            self.redis_client.set(cache_key, reading.json(), expiration) 
             
-            # Lưu vào danh sách lịch sử gần đây
+            # Lưu vào danh sách lịch sử gần đây (already stores as JSON string)
             history_key = f"{self.key_prefix}{self.sensor_type.value}:history"
             self.redis_client.redis.lpush(history_key, reading.json())
             # Giữ chỉ 100 giá trị gần nhất
@@ -239,16 +244,18 @@ class BaseCollector(Generic[T], ABC):
         """
         try:
             cache_key = f"{self.key_prefix}{self.sensor_type.value}:latest"
-            data = self.redis_client.get(cache_key)
+            # MODIFIED: Retrieve JSON string and parse it
+            json_data = self.redis_client.get(cache_key) 
             
-            if not data:
+            if not json_data:
                 return None
                 
             # Xác định lớp con của SensorReading dựa trên sensor_type
             reading_class = self._get_reading_class()
             
-            # Tạo đối tượng từ dữ liệu
-            return reading_class(**data)
+            # Tạo đối tượng từ dữ liệu JSON thô
+            # Pydantic's parse_raw method can deserialize a JSON string into a model instance
+            return reading_class.parse_raw(json_data)
             
         except Exception as e:
             logger.error(f"Error getting latest reading from cache for {self.sensor_type}: {str(e)}")
@@ -266,6 +273,7 @@ class BaseCollector(Generic[T], ABC):
         """
         try:
             history_key = f"{self.key_prefix}{self.sensor_type.value}:history"
+            # lrange returns a list of strings (JSON strings in this case)
             data_list = self.redis_client.redis.lrange(history_key, 0, limit - 1)
             
             if not data_list:
@@ -276,9 +284,15 @@ class BaseCollector(Generic[T], ABC):
             
             # Tạo danh sách đối tượng từ dữ liệu
             readings = []
-            for data_json in data_list:
-                import json
-                data = json.loads(data_json)
+            for data_json_bytes in data_list: # redis-py lrange returns list of bytes
+                # Decode bytes to string, then parse JSON string to dict, then create model
+                # Pydantic's parse_raw can handle bytes directly if they are UTF-8 encoded JSON
+                # Or, could do: data_json_str = data_json_bytes.decode('utf-8')
+                # reading = reading_class.parse_raw(data_json_str)
+                # The existing code uses json.loads and then **data, which is also fine.
+                # Let's assume data_json_bytes are indeed bytes from redis.
+                data_json_str = data_json_bytes.decode('utf-8') # Ensure it's a string
+                data = json.loads(data_json_str)
                 readings.append(reading_class(**data))
                 
             return readings

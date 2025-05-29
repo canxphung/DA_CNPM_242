@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
 from src.core.greenhouse_ai_service import GreenhouseAIService
-from src.api.app import get_service
+from src.api.dependencies import get_service
 
 router = APIRouter()
 

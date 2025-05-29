@@ -23,7 +23,30 @@ class IrrigationModel(BaseModel):
         """Initialize the irrigation model."""
         super().__init__(model_type="irrigation", version=version)
         self.scaler = StandardScaler()
+    
+    def load_model(self, model_path=None):
+        super().load_model(model_path)
+
+        # Load scaler
+        if self.model_path:
+            scaler_path = self.model_path.replace(".pkl", "_scaler.pkl")
+            if os.path.exists(scaler_path):
+                with open(scaler_path, 'rb') as file:
+                    self.scaler = pickle.load(file)
+            else:
+                raise FileNotFoundError(f"Scaler file not found: {scaler_path}")
+        return self
+
+    def save_model(self, accuracy=None, extra_metadata=None):
+        model_path = super().save_model(accuracy, extra_metadata)
         
+        # Save scaler
+        scaler_path = model_path.replace(".pkl", "_scaler.pkl")
+        with open(scaler_path, 'wb') as f:
+            pickle.dump(self.scaler, f)
+
+        return model_path
+
     def preprocess_input(self, data):
         """
         Preprocess input data for irrigation prediction.

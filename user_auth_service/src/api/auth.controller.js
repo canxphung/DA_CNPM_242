@@ -1,9 +1,15 @@
 const authService = require('../core/auth/auth.service');
-
+const logger = require('../infrastructure/logging/logger');
+const userService = require('../core/users/user.service');
+const { generateAccessToken, generateRefreshToken } = require('../core/auth/jwt.utils');
+const config = require('../infrastructure/config/index');
 /**
  * Xử lý yêu cầu đăng nhập
  */
 const login = async (req, res) => {
+  logger.info('[AUTH CONTROLLER] Login endpoint hit.');
+  logger.info('[AUTH CONTROLLER] Request body for login:', req.body);
+  logger.info('[AUTH CONTROLLER] Request headers for login:', req.headers); // Kiểm tra headers
   try {
     const { email, password } = req.body;
     
@@ -12,7 +18,9 @@ const login = async (req, res) => {
     }
     
     const authData = await authService.login(email, password);
-    
+    console.log('[AUTH CONTROLLER] Login response data:', authData);
+
+    logger.info('Login response data:', authData);
     return res.status(200).json(authData);
   } catch (error) {
     console.error('Login error:', error);
@@ -93,8 +101,71 @@ const me = async (req, res) => {
   });
 };
 
+const register = async (req, res) => {
+  try {
+    const { email, password, firstName, lastName } = req.body;
+    
+    // Validation cơ bản
+    if (!email || !password || !firstName || !lastName) {
+      return res.status(400).json({ 
+        error: 'All fields are required' 
+      });
+    }
+    
+    // Kiểm tra email đã tồn tại
+    const existingUser = await userService.getUserByEmail(email);
+    if (existingUser) {
+      return res.status(400).json({ 
+        error: 'Email already registered' 
+      });
+    }
+    
+    // Tạo user mới với role mặc định là 'user'
+    const userData = {
+      email,
+      password,
+      firstName,
+      lastName,
+      role: 'user',        // ← Role mặc định
+      isActive: true
+    };
+    
+    const user = await userService.createUser(userData);
+    
+    // Tự động đăng nhập sau khi đăng ký
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+    
+    // Lưu refresh token
+    await user.addRefreshToken(refreshToken);
+    
+    return res.status(201).json({
+      message: 'Registration successful',
+      user: {
+        id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role
+      },
+      tokens: {
+        accessToken,
+        refreshToken,
+        expiresIn: config.jwt.expiresIn
+      }
+    });
+    
+  } catch (error) {
+    console.error('Registration error:', error);
+    return res.status(500).json({ 
+      error: 'Registration failed' 
+    });
+  }
+};
+
 module.exports = {
   login,
+  register,
   refreshToken,
   logout,
   logoutAll,

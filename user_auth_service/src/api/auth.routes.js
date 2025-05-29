@@ -39,4 +39,14 @@ router.post('/logout-all', authenticate, authController.logoutAll);
  */
 router.get('/me', authenticate, authController.me);
 
+// auth.routes.js - Thêm route này
+const { registerRules } = require('../infrastructure/middlewares/validation.middleware');
+
+/**
+ * @route POST /api/v1/auth/register
+ * @desc Đăng ký tài khoản mới
+ * @access Public
+ */
+router.post('/register', registerRules, authController.register);
+
 module.exports = router;

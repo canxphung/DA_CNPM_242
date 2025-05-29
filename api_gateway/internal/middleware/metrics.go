@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -60,19 +61,8 @@ func (m *MetricsMiddleware) CollectMetrics(next http.Handler) http.Handler {
 		path := r.URL.Path
 		method := r.Method
 
-		// Determine service based on path
-		service := "unknown"
-		if len(path) > 1 {
-			pathWithoutLeadingSlash := path[1:]
-			switch {
-			case len(pathWithoutLeadingSlash) >= 9 && pathWithoutLeadingSlash[:9] == "user-auth":
-				service = "user-auth"
-			case len(pathWithoutLeadingSlash) >= 14 && pathWithoutLeadingSlash[:14] == "core-operation":
-				service = "core-operation"
-			case len(pathWithoutLeadingSlash) >= 2 && pathWithoutLeadingSlash[:2] == "ai":
-				service = "ai"
-			}
-		}
+		// Determine service based on path with improved detection
+		service := m.detectService(path)
 
 		// Track in-flight requests
 		m.requestsInFlight.WithLabelValues(method, path).Inc()
@@ -91,6 +81,33 @@ func (m *MetricsMiddleware) CollectMetrics(next http.Handler) http.Handler {
 		m.requestCounter.WithLabelValues(method, path, service, status).Inc()
 		m.requestDuration.WithLabelValues(method, path, service).Observe(duration)
 	})
+}
+
+// detectService determines which service the request is for based on the path
+func (m *MetricsMiddleware) detectService(path string) string {
+	// Handle gateway endpoints
+	if path == "/" || path == "/health" || path == "/metrics" {
+		return "gateway"
+	}
+
+	// Handle API v1 endpoints
+	if strings.HasPrefix(path, "/api/v1/") {
+		pathSegments := strings.Split(strings.TrimPrefix(path, "/api/v1/"), "/")
+		if len(pathSegments) > 0 {
+			switch pathSegments[0] {
+			case "user-auth":
+				return "user-auth"
+			case "core-operation", "core-operations":
+				return "core-operation"
+			case "greenhouse-ai":
+				return "greenhouse-ai"
+			case "health":
+				return "gateway"
+			}
+		}
+	}
+
+	return "unknown"
 }
 
 // Custom response writer for metrics
