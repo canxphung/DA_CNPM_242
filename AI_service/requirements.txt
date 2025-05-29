@@ -45,3 +45,10 @@ isort==5.12.0
 
 # Deployment
 gunicorn==21.2.0
+
+# Thêm dòng:
+google-genai
+backoff
+google-generativeai
+redis
+firebase-admin

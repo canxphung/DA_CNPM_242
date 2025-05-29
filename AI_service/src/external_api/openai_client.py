@@ -1,46 +1,60 @@
 # src/external_api/openai_client.py
+# File này đã được chuyển đổi hoàn toàn sang Google AI
 import os
 import json
 import time
 import backoff
-import openai
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import re
 from datetime import datetime
 import sys
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from config.config import OPENAI_API_KEY
+from config.config import GOOGLE_API_KEY
 from src.core.cache_manager import APICacheManager
 
-# Configure OpenAI API
-openai.api_key = OPENAI_API_KEY
+# Configure Google AI
+genai.configure(api_key=GOOGLE_API_KEY)
 
 class OpenAIClient:
     """
-    Client for interacting with the OpenAI API.
-    Provides methods for different types of requests with caching and error handling.
+    Client đã được chuyển đổi sang Google AI (Gemini).
+    Giữ nguyên tên class và interface để không phải sửa code khác.
     """
     
     def __init__(self, use_cache=True):
         """
-        Initialize the OpenAI client.
+        Initialize the Google AI client.
         
         Args:
             use_cache: Whether to use caching for API responses
         """
         self.use_cache = use_cache
         self.cache = APICacheManager() if use_cache else None
-        self.model = "gpt-3.5-turbo"  # Default model
+        self.model = "gemini-pro"  # Thay cho gpt-3.5-turbo
+        
+        # Khởi tạo model với cấu hình an toàn cho tiếng Việt
+        self.gemini_model = genai.GenerativeModel(
+            'gemini-pro',
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            }
+        )
     
     @backoff.on_exception(
         backoff.expo,
-        (openai.error.RateLimitError, openai.error.APIError, openai.error.ServiceUnavailableError),
+        Exception,
         max_tries=3
     )
     def chat_completion(self, messages, temperature=0.7, max_tokens=None, use_cache=None):
         """
-        Make a chat completion request to OpenAI API with caching and error handling.
+        Make a chat completion request - giờ sử dụng Google AI.
+        Giữ nguyên interface để tương thích với code cũ.
         
         Args:
             messages: List of message dictionaries
@@ -49,7 +63,7 @@ class OpenAIClient:
             use_cache: Override instance cache setting
             
         Returns:
-            API response or cached response
+            API response với format giống OpenAI
         """
         # Determine whether to use cache
         should_use_cache = self.use_cache if use_cache is None else use_cache
@@ -63,28 +77,76 @@ class OpenAIClient:
                 return cached_response
         
         try:
-            # Make the API request
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=messages,
+            # Chuyển đổi messages thành prompt cho Google AI
+            prompt = self._convert_messages_to_prompt(messages)
+            
+            # Cấu hình generation
+            generation_config = genai.types.GenerationConfig(
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_output_tokens=max_tokens,
             )
+            
+            # Make the API request
+            response = self.gemini_model.generate_content(
+                prompt,
+                generation_config=generation_config
+            )
+            
+            # Format response giống OpenAI để code cũ vẫn hoạt động
+            formatted_response = {
+                'choices': [{
+                    'message': {
+                        'content': response.text
+                    }
+                }],
+                'model': self.model,
+                'usage': {
+                    'total_tokens': len(prompt.split()) + len(response.text.split())
+                }
+            }
             
             # Cache the response if using cache
             if should_use_cache:
-                self.cache.set(cache_key, response)
+                self.cache.set(cache_key, formatted_response)
             
-            return response
+            return formatted_response
             
-        except (openai.error.RateLimitError, openai.error.APIError, 
-                openai.error.ServiceUnavailableError) as e:
-            # These will be retried by the backoff decorator
-            raise e
         except Exception as e:
-            # Log other errors but don't retry
-            print(f"Error in OpenAI request: {str(e)}")
+            print(f"Error in Google AI request: {str(e)}")
             raise
+    
+    def _convert_messages_to_prompt(self, messages):
+        """
+        Chuyển đổi format messages của OpenAI sang prompt cho Google AI.
+        
+        Args:
+            messages: List of message dictionaries với role và content
+            
+        Returns:
+            Prompt string cho Google AI
+        """
+        prompt_parts = []
+        
+        for message in messages:
+            role = message.get('role', 'user')
+            content = message.get('content', '')
+            
+            if role == 'system':
+                # System prompt đặt ở đầu
+                prompt_parts.insert(0, f"Hướng dẫn hệ thống: {content}\n")
+            elif role == 'user':
+                prompt_parts.append(f"Người dùng: {content}")
+            elif role == 'assistant':
+                prompt_parts.append(f"Trợ lý: {content}")
+        
+        # Kết hợp thành một prompt
+        prompt = "\n\n".join(prompt_parts)
+        
+        # Thêm dấu hiệu cho AI biết cần trả lời
+        if messages[-1]['role'] == 'user':
+            prompt += "\n\nTrợ lý:"
+        
+        return prompt
     
     def analyze_user_input(self, text, intent_filter=None):
         """
@@ -104,7 +166,7 @@ class OpenAIClient:
             "turn_on_pump, turn_off_pump, get_status, schedule_irrigation. "
             "Ngoài ra, hãy trích xuất tất cả thông tin quan trọng từ văn bản như "
             "thời gian, thời lượng, v.v. "
-            "Trả về kết quả dưới dạng JSON với các trường 'intent' và 'entities'."
+            "QUAN TRỌNG: Chỉ trả về JSON với các trường 'intent' và 'entities', không thêm văn bản giải thích."
         )
         
         if intent_filter:
@@ -123,12 +185,15 @@ class OpenAIClient:
         response = self.chat_completion(messages, temperature=0.3)
         
         try:
-            content = response.choices[0].message.content.strip()
-            # Try to parse JSON response
+            content = response['choices'][0]['message']['content'].strip()
+            # Loại bỏ markdown nếu có
+            content = re.sub(r'^```json\s*', '', content)
+            content = re.sub(r'\s*```$', '', content)
+            # Parse JSON
             result = json.loads(content)
             return result
         except json.JSONDecodeError:
-            # If response is not valid JSON, try to extract information manually
+            # Nếu không parse được JSON, thử extract thủ công
             intent = None
             if "intent" in content.lower():
                 intent_match = re.search(r'intent["\']?\s*:\s*["\']?([^"\'}\s,]+)', content)
@@ -155,7 +220,7 @@ class OpenAIClient:
             "Bạn là chuyên gia tưới tiêu. Dựa trên dữ liệu cảm biến, hãy đưa ra khuyến "
             "nghị có nên tưới không và trong bao lâu. Nếu độ ẩm đất thấp hơn 30%, "
             "nhiệt độ cao, và độ ẩm không khí thấp, rất có thể cần tưới. "
-            "Trả về JSON với should_irrigate (true/false), duration_minutes (số phút) và reason (lý do)."
+            "QUAN TRỌNG: Chỉ trả về JSON với should_irrigate (true/false), duration_minutes (số phút) và reason (lý do)."
         )
         
         # Format sensor data for the prompt
@@ -175,15 +240,18 @@ class OpenAIClient:
         response = self.chat_completion(messages, temperature=0.3)
         
         try:
-            content = response.choices[0].message.content.strip()
+            content = response['choices'][0]['message']['content'].strip()
+            # Loại bỏ markdown nếu có
+            content = re.sub(r'^```json\s*', '', content)
+            content = re.sub(r'\s*```$', '', content)
             result = json.loads(content)
             return result
         except json.JSONDecodeError:
-            # If response is not valid JSON, return a default recommendation
+            # Return default nếu parse thất bại
             return {
                 "should_irrigate": sensor_data.get('soil_moisture', 50) < 30,
                 "duration_minutes": 10,
-                "reason": "Recommended based on soil moisture level",
+                "reason": "Dựa trên độ ẩm đất",
                 "error": "Failed to parse API response"
             }
     
@@ -230,7 +298,7 @@ class OpenAIClient:
         ]
         
         response = self.chat_completion(messages, temperature=0.7)
-        return response.choices[0].message.content.strip()
+        return response['choices'][0]['message']['content'].strip()
     
     def _generate_cache_key(self, messages, temperature, max_tokens):
         """

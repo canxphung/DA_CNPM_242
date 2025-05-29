@@ -64,6 +64,16 @@ class ConfigLoader:
                 'security_rules': SECURITY_RULES
             }
             
+        # Tải cấu hình Intervals
+        intervals_config_path = os.path.join(config_dir, 'intervals_config.py')
+        if os.path.exists(intervals_config_path):
+            from config.intervals_config import TASK_INTERVALS, MIN_INTERVALS, INTERVAL_DESCRIPTIONS
+            self.config['intervals'] = {
+                'task_intervals': TASK_INTERVALS,
+                'min_intervals': MIN_INTERVALS,
+                'descriptions': INTERVAL_DESCRIPTIONS
+            }
+            
         logger.info(f"Loaded configuration modules: {', '.join(self.config.keys())}")
         
     def get(self, key: str, default: Any = None) -> Any:
@@ -160,3 +170,55 @@ class ConfigLoader:
             Khóa feed hoặc None nếu không tìm thấy
         """
         return self.get(f'adafruit.actuator_feeds.{actuator_type}')
+        
+    def get_interval(self, task_type: str, default: int = 60) -> int:
+        """
+        Lấy interval cho một loại task cụ thể.
+        
+        Phương thức này quan trọng cho việc quản lý các intervals khác nhau
+        trong hệ thống. Nó cho phép:
+        1. Lấy interval từ biến môi trường (ưu tiên cao nhất)
+        2. Lấy từ file cấu hình intervals_config.py
+        3. Sử dụng giá trị mặc định nếu không tìm thấy
+        
+        Args:
+            task_type: Loại task (pump_status, sensor_data, schedule_check, auto_decision)
+            default: Giá trị mặc định nếu không tìm thấy
+            
+        Returns:
+            Interval tính bằng giây
+        """
+        # Bước 1: Thử lấy từ biến môi trường trước
+        # Điều này cho phép override mà không cần sửa code
+        env_key = f"{task_type.upper()}_INTERVAL"
+        env_value = os.getenv(env_key)
+        
+        if env_value:
+            try:
+                interval = int(env_value)
+                
+                # Bước 2: Validate với giới hạn tối thiểu
+                # Đảm bảo interval không quá nhỏ gây quá tải hệ thống
+                min_interval = self.get(f'intervals.min_intervals.{task_type}', 30)
+                
+                if interval < min_interval:
+                    logger.warning(
+                        f"Interval from env {env_key}={interval}s is below minimum {min_interval}s. "
+                        f"Using minimum value."
+                    )
+                    return min_interval
+                    
+                return interval
+                
+            except ValueError:
+                logger.warning(f"Invalid interval value in environment variable {env_key}: {env_value}")
+        
+        # Bước 3: Nếu không có trong env, lấy từ config
+        config_interval = self.get(f'intervals.task_intervals.{task_type}')
+        
+        if config_interval is not None:
+            return config_interval
+            
+        # Bước 4: Sử dụng giá trị mặc định
+        logger.debug(f"No interval configured for task '{task_type}', using default: {default}s")
+        return default

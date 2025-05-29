@@ -1,9 +1,12 @@
 import os
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv(os.path.dirname(__file__) + '/.env')
-
+# load_dotenv(os.path.dirname(__file__).parent + '/.env')
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
 # Database configuration
 DATABASE_URL = os.getenv('DATABASE_URL')
 
@@ -16,7 +19,7 @@ CACHE_STORAGE_PATH = os.getenv('CACHE_STORAGE_PATH')
 
 # API configuration
 API_HOST = os.getenv('API_HOST')
-API_PORT = os.getenv('API_PORT')
+API_PORT = int(os.getenv('API_PORT'))
 
 # Cấu hình tích hợp Core Operations Service
 CORE_OPS_API_URL = os.getenv('CORE_OPS_API_URL')
@@ -40,7 +43,7 @@ RESOURCE_OPTIMIZATION = {
 }
 
 # Cấu hình OpenAI - mặc định
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.7'))
 
 # Cấu hình mặc định tưới

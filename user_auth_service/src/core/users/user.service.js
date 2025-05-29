@@ -162,6 +162,10 @@ class UserService {
     // Thường nên sử dụng soft delete (deactivateUser) thay vì xóa hoàn toàn
     return userRepository.delete(id);
   }
+  // user.service.js - Thêm method này nếu chưa có
+  async getUserByEmail(email) {
+    return userRepository.findByEmail(email);
+  }
 }
 
 module.exports = new UserService();

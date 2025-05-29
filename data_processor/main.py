@@ -7,12 +7,16 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Depends, HTTPException, status, Request
+# IMPORTANT: Comment out or remove this import to avoid conflicts
+# from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+
+# Import our custom CORS middleware
+from src.infrastructure.middlewares.cors_middleware import GatewayAwareCORSMiddleware
 
 from src.api.routes import register_routes
 from src.infrastructure.logging import setup_logging
@@ -20,6 +24,8 @@ from src.infrastructure import get_service_factory
 from src.core.data import DataManager
 from src.core.control import IrrigationManager
 from src.infrastructure.database.connections import init_database_connections
+from fastapi import FastAPI
+from src.infrastructure.middlewares.cors_middleware import GatewayAwareCORSMiddleware
 
 # Tải biến môi trường từ .env
 load_dotenv()
@@ -47,15 +53,23 @@ async def lifespan(app: FastAPI):
     factory.init_all_services()
     
     # Khởi tạo các feed Adafruit cần thiết
+    # Khởi tạo các feed Adafruit cần thiết
     logger.info("Initializing required Adafruit IO feeds")
     adafruit_client = factory.create_adafruit_client()
+
+    # Lấy tên feed thực từ config
+    config = factory.get_config_loader()
     required_feeds = [
-        "light",
-        "temperature", 
-        "humidity", 
-        "soil-moisture", 
-        "water-pump-control"
+        config.get('adafruit.sensor_feeds.light'),
+        config.get('adafruit.sensor_feeds.temperature'), 
+        config.get('adafruit.sensor_feeds.humidity'),
+        config.get('adafruit.sensor_feeds.soil_moisture'),
+        config.get('adafruit.actuator_feeds.water_pump')
     ]
+
+    # Lọc bỏ None values
+    required_feeds = [f for f in required_feeds if f]
+
     adafruit_client.initialize_feeds(required_feeds)
     
     # QUAN TRỌNG: Đăng ký routes sau khi các kết nối đã được khởi tạo
@@ -63,8 +77,8 @@ async def lifespan(app: FastAPI):
     
     # Khởi tạo DataManager và bắt đầu thu thập dữ liệu ngầm
     data_manager = DataManager()
-    # Lấy thời gian cập nhật từ cấu hình, mặc định 60 giây
-    collection_interval = factory.get_config_loader().get('adafruit.data_collection.interval', 60)
+    # Lấy interval từ cấu hình mới
+    collection_interval = factory.get_config_loader().get_interval('sensor_data', 60)
     data_manager.start_background_collection(interval=collection_interval)
     logger.info(f"Started background data collection (interval: {collection_interval}s)")
     
@@ -103,6 +117,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error stopping irrigation system: {str(e)}")
 
+# app = FastAPI()
+# app.add_middleware(GatewayAwareCORSMiddleware)
 # Tạo ứng dụng FastAPI với metadata chi tiết hơn
 app = FastAPI(
     title="Core Operations Service",
@@ -147,13 +163,16 @@ app = FastAPI(
     lifespan=lifespan,  # Thêm lifespan context manager
 )
 
-# Thêm CORS middleware
+# REMOVED: Default CORS middleware
+
+# ADDED: Custom CORS middleware that's aware of the API Gateway
 app.add_middleware(
-    CORSMiddleware,
+    GatewayAwareCORSMiddleware,
     allow_origins=["*"],  # Trong môi trường production, chỉ định rõ các origin được phép
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-CSRF-Token", "X-Requested-With", "Origin", "X-Request-ID"],
+    expose_headers=["X-Request-ID", "X-Proxied-By"]
 )
 
 # Tùy chỉnh OpenAPI schema
@@ -203,8 +222,15 @@ async def custom_swagger_ui_html():
         swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@4/swagger-ui.css",
     )
 
-# Đăng ký các routes API sau khi ứng dụng đã được khởi tạo
-# register_routes(app) # Đã di chuyển vào lifespan function để đảm bảo đúng thứ tự khởi tạo
+# NEW: Add debug endpoint for CORS testing
+@app.get("/debug/headers", tags=["debug"])
+async def debug_headers(request: Request):
+    """Debug endpoint that returns all request headers."""
+    return {
+        "request_headers": dict(request.headers),
+        "cors_handled_by_gateway": request.headers.get("X-Backend-CORS-Handled") == "true",
+        "origin": request.headers.get("origin", "No origin header")
+    }
 
 # Tạo route thông tin phiên bản
 @app.get("/version", tags=["system"])

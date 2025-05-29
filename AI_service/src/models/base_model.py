@@ -71,8 +71,7 @@ class BaseModel:
             json.dump(metadata, indent=2)
 
         # Register the model in the database
-        session = get_db_session()
-        try:
+        with get_db_session() as session:
             ModelMetadata.create(
                 db=session,
                 type=self.model_type,
@@ -81,8 +80,7 @@ class BaseModel:
                 accuracy=accuracy
             )
 
-        finally:
-            session.close()
+        # Update the model path
         self.model_path = filepath
         return filepath
 
@@ -111,8 +109,7 @@ class BaseModel:
                         self.feature_columns = metadata["feature_columns"]
         else:
             # Get active model from the database
-            session = get_db_session()
-            try:
+            with get_db_session() as session:
                 model_metadata = ModelMetadata.get_active_model(
                     session,
                     self.model_type
@@ -134,8 +131,6 @@ class BaseModel:
                                 self.feature_columns = metadata["feature_columns"]
                 else:
                     raise ValueError(f"No active model found for type {self.model_type}")
-            finally:
-                session.close()
         return self
     def preprocess_input(self, data):
         """

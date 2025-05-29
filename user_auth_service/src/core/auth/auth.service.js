@@ -1,7 +1,6 @@
 const User = require('../users/user.model');
 const { generateAccessToken, generateRefreshToken, verifyToken } = require('./jwt.utils');
 const config = require('../../infrastructure/config');
-
 /**
  * Dịch vụ xác thực người dùng
  */
@@ -31,11 +30,28 @@ class AuthService {
     // Tạo access và refresh token
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
+
+    console.log('accessToken:', accessToken);
+    console.log('refreshToken:', refreshToken);
+
     
     // Lưu refresh token vào database
     const refreshExpiresIn = config.jwt.refreshExpiresIn.replace(/[^0-9]/g, '');
     await user.addRefreshToken(refreshToken, refreshExpiresIn);
-    
+    console.log('[AUTH SERVICE] Returning login data:', {
+      user: {
+        id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role
+      },
+      tokens: {
+        accessToken,
+        refreshToken,
+        expiresIn: config.jwt.expiresIn
+      }
+    });
     return {
       user: {
         id: user._id,

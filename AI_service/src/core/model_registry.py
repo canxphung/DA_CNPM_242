@@ -8,7 +8,7 @@ from datetime import datetime
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from src.database import get_db_session
-from src.database.model_storage import ModelMetadata
+from src.database.models_storage import ModelMetadata
 from src.models.irrigation_model import IrrigationModel
 from src.models.chatbot_model import ChatbotModel
 from src.models.training import ModelTraining
@@ -107,8 +107,7 @@ class ModelRegistry:
         Returns:
             Dictionary of model types and their versions
         """
-        session = get_db_session()
-        try:
+        with get_db_session() as session:
             models = session.query(ModelMetadata).all()
             
             # Group by model type
@@ -126,8 +125,6 @@ class ModelRegistry:
                 })
             
             return result
-        finally:
-            session.close()
     
     def set_active_model(self, model_type, version):
         """
@@ -140,8 +137,8 @@ class ModelRegistry:
         Returns:
             True if successful, False otherwise
         """
-        session = get_db_session()
-        try:
+        with get_db_session() as session:
+        
             # Find the model with the specified version
             model = session.query(ModelMetadata).filter(
                 ModelMetadata.type == model_type,
@@ -166,12 +163,7 @@ class ModelRegistry:
             
             logger.info(f"Set {model_type} model version {version} as active")
             return True
-        except Exception as e:
-            logger.error(f"Error setting active model: {str(e)}")
-            session.rollback()
-            return False
-        finally:
-            session.close()
+        
     
     def _generate_version(self, model_type):
         """
@@ -183,8 +175,7 @@ class ModelRegistry:
         Returns:
             New version string (semantic versioning)
         """
-        session = get_db_session()
-        try:
+        with get_db_session() as session:
             # Get the latest version of this model type
             latest = session.query(ModelMetadata).filter(
                 ModelMetadata.type == model_type
@@ -203,5 +194,3 @@ class ModelRegistry:
                 # If version parsing fails, use timestamp
                 timestamp = datetime.now().strftime("%Y%m%d%H%M")
                 return f"0.1.0-{timestamp}"
-        finally:
-            session.close()

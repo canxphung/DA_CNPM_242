@@ -15,7 +15,7 @@ type AIHandler struct {
 
 // NewAIHandler creates a new AI handler
 func NewAIHandler(serviceURL string, logger *zap.Logger) (*AIHandler, error) {
-	serviceProxy, err := proxy.NewServiceProxy(serviceURL, "ai", logger)
+	serviceProxy, err := proxy.NewServiceProxy(serviceURL, "greenhouse-ai", logger)
 	if err != nil {
 		return nil, err
 	}
@@ -28,11 +28,15 @@ func NewAIHandler(serviceURL string, logger *zap.Logger) (*AIHandler, error) {
 }
 
 // RegisterRoutes registers the AI routes
+// This method is called on the apiV1 subrouter which already has /api/v1 prefix
 func (h *AIHandler) RegisterRoutes(router *mux.Router) {
 	// All AI endpoints require authentication (handled by middleware)
-	router.PathPrefix("/ai/").Handler(h.serviceProxy)
+	// Register with relative path since we're on apiV1 subrouter
+	router.PathPrefix("/greenhouse-ai/").Handler(h.serviceProxy)
 
-	h.logger.Info("AI routes registered",
+	h.logger.Info("AI routes registered on apiV1 subrouter",
 		zap.String("service_url", h.serviceURL),
+		zap.String("service_id", "greenhouse-ai"),
+		zap.String("effective_prefix", "/api/v1/greenhouse-ai/"),
 	)
 }

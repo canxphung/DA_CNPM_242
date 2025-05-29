@@ -31,8 +31,7 @@ class ModelTraining:
         Returns:
             DataFrame ready for training
         """
-        session = get_db_session()
-        try:
+        with get_db_session() as session:
             # Get the date range
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days_back)
@@ -86,8 +85,6 @@ class ModelTraining:
                 rows.append(row)
             
             return pd.DataFrame(rows)
-        finally:
-            session.close()
     
     @staticmethod
     def prepare_default_chatbot_data():

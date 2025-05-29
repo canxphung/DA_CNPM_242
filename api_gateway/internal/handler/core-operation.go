@@ -15,7 +15,7 @@ type CoreOperationHandler struct {
 
 // NewCoreOperationHandler creates a new core operation handler
 func NewCoreOperationHandler(serviceURL string, logger *zap.Logger) (*CoreOperationHandler, error) {
-	serviceProxy, err := proxy.NewServiceProxy(serviceURL, "core-operation", logger)
+	serviceProxy, err := proxy.NewServiceProxy(serviceURL, "core-operations", logger)
 	if err != nil {
 		return nil, err
 	}
@@ -28,11 +28,18 @@ func NewCoreOperationHandler(serviceURL string, logger *zap.Logger) (*CoreOperat
 }
 
 // RegisterRoutes registers the core operation routes
+// This method is called on the apiV1 subrouter which already has /api/v1 prefix
 func (h *CoreOperationHandler) RegisterRoutes(router *mux.Router) {
 	// All core operation endpoints require authentication (handled by middleware)
-	router.PathPrefix("/core-operation/").Handler(h.serviceProxy)
+	// Register with relative path since we're on apiV1 subrouter
+	router.PathPrefix("/core-operations/").Handler(h.serviceProxy)
 
-	h.logger.Info("Core Operation routes registered",
+	// Also support the plural form for backward compatibility
+	router.PathPrefix("/core-operations/").Handler(h.serviceProxy)
+
+	h.logger.Info("Core Operation routes registered on apiV1 subrouter",
 		zap.String("service_url", h.serviceURL),
+		zap.String("service_id", "core-operations"),
+		zap.String("effective_prefix", "/api/v1/core-operations/"),
 	)
 }

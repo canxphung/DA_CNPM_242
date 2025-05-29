@@ -37,43 +37,89 @@ func NewAuthMiddleware(jwtManager *JWTManager, logger *zap.Logger) *AuthMiddlewa
 // Nó cho phép các đường dẫn công khai (public paths) đi qua mà không cần xác thực.
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Log all requests that reach the auth middleware
+		m.logger.Debug("Auth middleware processing request",
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+			zap.String("origin", r.Header.Get("Origin")))
+
+		// Always allow OPTIONS requests (CORS preflight) to pass through
+		if r.Method == "OPTIONS" {
+			m.logger.Debug("Auth middleware: OPTIONS request detected, passing through",
+				zap.String("path", r.URL.Path))
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Danh sách các đường dẫn công khai (không yêu cầu xác thực).
 		// Các đường dẫn này phải là *đường dẫn đầy đủ mà Gateway nhận được từ client*.
 		publicPaths := []string{
 			// Gateway's own common endpoints
 			"/",              // Gateway root endpoint
-			"/health",        // Gateway health check (if direct)
-			"/metrics",       // Prometheus metrics endpoint (if exposed)
-			"/api/v1/health", // Common API versioned health check (if general)
+			"/health",        // Gateway health check
+			"/metrics",       // Prometheus metrics endpoint
+			"/api/v1/health", // Common API versioned health check
 
-			// User & Auth Service (Node.js) public endpoints
-			// Assuming serviceID "auth" is used for routing to Node.js service
-			"/api/v1/auth/login",       // User login endpoint
-			"/api/v1/auth/admin/login", // Admin login endpoint
-			"/api/v1/auth/register",    // User registration endpoint
-			"/api/v1/auth/docs",        // Swagger UI for User & Auth Service
-			"/api/v1/auth",             // Root of Node.js User & Auth service (maps to Node.js app.get('/'))
+			// === User & Auth Service (Node.js) endpoints ===
+			"/api/v1/user-auth/auth/login",         // User login endpoint
+			"/api/v1/user-auth/auth/admin/login",   // Admin login endpoint
+			"/api/v1/user-auth/auth/register",      // User registration endpoint
+			"/api/v1/user-auth/auth/refresh-token", // Refresh access token
+			"/api/v1/user-auth/auth/docs",          // Swagger UI for Auth Service
+			"/api/v1/user-auth/auth",               // Root of Auth service
+			"/api/v1/user-auth/monitoring/health",  // Health check for monitoring
+			// user profile and operations
+			"/api/v1/user-auth/users",  // gốc
+			"/api/v1/user-auth/users/", // để dùng với strings.HasPrefix
 
-			// Core Operations Service (Python/FastAPI) public endpoints
-			// Assuming serviceID "core-operations"
-			"/api/v1/core-operations",         // Root of Core Operations Service (maps to FastAPI app.get('/'))
-			"/api/v1/core-operations/health",  // Health check of Core Operations Service
-			"/api/v1/core-operations/version", // Version info of Core Operations Service
-			"/api/v1/core-operations/docs",    // Swagger UI for Core Operations Service (if exposed)
+			// === Core Operations Service (Python/FastAPI) endpoints ===
+			// Hỗ trợ cả hai dạng tiền tố "/api/v1/core-operations" và "/api/v1/core-operation"
+			"/api/v1/core-operations", "/api/v1/core-operation", // Root endpoint
+			"/api/v1/core-operations/health", "/api/v1/core-operation/health", // Health check
+			"/api/v1/core-operations/version", "/api/v1/core-operation/version", // Version info
+			"/api/v1/core-operations/docs", "/api/v1/core-operation/docs", // Swagger UI
 
-			// Greenhouse AI Service (Python/FastAPI) public endpoints
-			// Assuming serviceID "greenhouse-ai"
-			"/api/v1/greenhouse-ai",        // Root of Greenhouse AI Service (maps to FastAPI app.get('/'))
-			"/api/v1/greenhouse-ai/health", // Health check of Greenhouse AI Service
-			"/api/v1/greenhouse-ai/docs",   // Swagger UI for Greenhouse AI Service (if exposed)
+			// System Config endpoints
+			"/api/v1/core-operations/system/config", "/api/v1/core-operation/system/config", // GET system config
+
+			// Sensor Data endpoints
+			"/api/v1/core-operations/sensors/", "/api/v1/core-operation/sensors/", // List available sensors
+			"/api/v1/core-operations/sensors/collect", "/api/v1/core-operation/sensors/collect", // Collect sensor data
+			"/api/v1/core-operations/sensors/snapshot", "/api/v1/core-operation/sensors/snapshot", // Environmental snapshot
+			"/api/v1/core-operations/sensors/light", "/api/v1/core-operation/sensors/light", // Light sensor data
+			"/api/v1/core-operations/sensors/temperature", "/api/v1/core-operation/sensors/temperature", // Temperature data
+			"/api/v1/core-operations/sensors/humidity", "/api/v1/core-operation/sensors/humidity", // Humidity data
+			"/api/v1/core-operations/sensors/soil_moisture", "/api/v1/core-operation/sensors/soil_moisture", // Soil moisture
+			"/api/v1/core-operations/sensors/analyze/soil_moisture", "/api/v1/core-operation/sensors/analyze/soil_moisture", // Analysis
+
+			// Status endpoints
+			"/api/v1/core-operations/control/status", "/api/v1/core-operation/control/status", // Irrigation system status
+			"/api/v1/core-operations/control/pump/status", "/api/v1/core-operation/control/pump/status", // Pump status
+			"/api/v1/core-operations/control/schedules", "/api/v1/core-operation/control/schedules", // List irrigation schedules
+			"/api/v1/core-operations/control/auto", "/api/v1/core-operation/control/auto", // Auto-irrigation config
+
+			// === Greenhouse AI Service (Python/FastAPI) endpoints ===
+			"/api/v1/greenhouse-ai",        // Root endpoint
+			"/api/v1/greenhouse-ai/health", // Health check
+			"/api/v1/greenhouse-ai/docs",   // Swagger UI
+
+			// Sensors & data endpoints
+			"/api/v1/greenhouse-ai/api/sensors/current", // Current sensor data
+			"/api/v1/greenhouse-ai/api/sensors/history", // Sensor history
+
+			// Analytics endpoints cho data công khai
+			"/api/v1/greenhouse-ai/api/analytics/model-performance", // Model performance
 		}
 
 		// Kiểm tra xem đường dẫn hiện tại có phải là công khai hay không
 		isPublic := false
 		for _, path := range publicPaths {
 			// Kiểm tra khớp chính xác hoặc đường dẫn con bắt đầu bằng tiền tố công khai
-			if r.URL.Path == path || strings.HasPrefix(r.URL.Path, path+"/") {
+			if r.URL.Path == path || strings.HasPrefix(r.URL.Path, path) {
 				isPublic = true
+				m.logger.Debug("Public path match found",
+					zap.String("request_path", r.URL.Path),
+					zap.String("matched_path", path))
 				break
 			}
 		}

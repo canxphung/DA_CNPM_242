@@ -50,16 +50,32 @@ func main() {
 	// Create logging middleware
 	loggingMiddleware := middleware.NewLoggingMiddleware(logger)
 
-	// Create CORS middleware
+	// Create CORS middleware - UPDATED: Pass logger to CORS middleware
 	corsMiddleware := middleware.NewCORSMiddleware([]string{
 		"http://localhost:5173", // Vite default dev server
 		"http://localhost:3000", // Create React App default
 		"http://localhost:3001", // Alternative port
-		"*",                     // Allow all origins in development
-	})
+		"http://localhost:4173", // Vite preview
+		"http://127.0.0.1:5173", // Alternative localhost
+		"http://127.0.0.1:3000", // Alternative localhost
+	}, logger) // Pass logger to CORS middleware
 
 	// Create router
 	router := mux.NewRouter()
+
+	// NEW: Handle OPTIONS requests for all routes globally
+	router.Methods("OPTIONS").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger.Debug("Global OPTIONS handler processing request",
+			zap.String("path", r.URL.Path),
+			zap.String("origin", r.Header.Get("Origin")))
+
+		w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, Origin, X-Request-ID")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
+		w.WriteHeader(http.StatusOK)
+	})
 
 	// Apply common middleware - ORDER IS IMPORTANT!
 	// CORS must come first to handle preflight requests
@@ -67,11 +83,7 @@ func main() {
 	router.Use(loggingMiddleware.LogRequest)
 	router.Use(metricsMiddleware.CollectMetrics)
 
-	// Create API v1 subrouter
-	apiV1 := router.PathPrefix("/api/v1").Subrouter()
-	apiV1.Use(authMiddleware.Authenticate)
-
-	// Health check endpoint (không cần auth)
+	// Health check endpoint (không cần auth) - register trước khi apply auth middleware
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -81,14 +93,23 @@ func main() {
 	// Metrics endpoint (không cần auth)
 	router.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 
-	// API v1 health check (không cần auth)
+	// API v1 health check (không cần auth) - register trước auth middleware
 	router.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `{"status":"healthy","version":"v1"}`)
 	}).Methods("GET")
 
-	// Setup service handlers với API v1 prefix
+	// Create API v1 subrouter
+	apiV1 := router.PathPrefix("/api/v1").Subrouter()
+
+	// UPDATED: Apply CORS middleware BEFORE auth middleware to API v1 subrouter
+	apiV1.Use(corsMiddleware.EnableCORS)
+
+	// Then apply auth middleware to all API v1 routes
+	apiV1.Use(authMiddleware.Authenticate)
+
+	// Setup service handlers với API v1 subrouter
 	setupServiceHandlers(apiV1, cfg, logger)
 
 	// Create HTTP server
@@ -102,7 +123,14 @@ func main() {
 
 	// Start server in a goroutine
 	go func() {
-		logger.Info("Server listening", zap.String("addr", server.Addr))
+		logger.Info("Server listening",
+			zap.String("addr", server.Addr),
+			zap.Strings("services", []string{
+				"user-auth: " + cfg.Services.UserAuthServiceURL,
+				"core-operation: " + cfg.Services.CoreOperationServiceURL,
+				"greenhouse-ai: " + cfg.Services.AIServiceURL,
+			}),
+		)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatal("Server error", zap.Error(err))
 		}
@@ -128,27 +156,38 @@ func main() {
 }
 
 // setupServiceHandlers initializes and registers the handlers for all services
-func setupServiceHandlers(router *mux.Router, cfg *config.Config, logger *zap.Logger) {
-	// Auth Service
+func setupServiceHandlers(apiV1Router *mux.Router, cfg *config.Config, logger *zap.Logger) {
+	// User & Auth Service
+	logger.Info("Setting up User & Auth service handler",
+		zap.String("url", cfg.Services.UserAuthServiceURL))
+
 	userAuthHandler, err := handler.NewUserAuthHandler(cfg.Services.UserAuthServiceURL, logger)
 	if err != nil {
 		logger.Fatal("Failed to create user & auth handler", zap.Error(err))
 	}
-	userAuthHandler.RegisterRoutes(router)
+	userAuthHandler.RegisterRoutes(apiV1Router)
 
 	// Core Operation Service
+	logger.Info("Setting up Core Operation service handler",
+		zap.String("url", cfg.Services.CoreOperationServiceURL))
+
 	coreOperationHandler, err := handler.NewCoreOperationHandler(cfg.Services.CoreOperationServiceURL, logger)
 	if err != nil {
 		logger.Fatal("Failed to create core operation handler", zap.Error(err))
 	}
-	coreOperationHandler.RegisterRoutes(router)
+	coreOperationHandler.RegisterRoutes(apiV1Router)
 
-	// AI Service
+	// Greenhouse AI Service
+	logger.Info("Setting up Greenhouse AI service handler",
+		zap.String("url", cfg.Services.AIServiceURL))
+
 	aiHandler, err := handler.NewAIHandler(cfg.Services.AIServiceURL, logger)
 	if err != nil {
 		logger.Fatal("Failed to create AI handler", zap.Error(err))
 	}
-	aiHandler.RegisterRoutes(router)
+	aiHandler.RegisterRoutes(apiV1Router)
+
+	logger.Info("All service handlers registered successfully")
 }
 
 // initLogger initializes the logger based on configuration

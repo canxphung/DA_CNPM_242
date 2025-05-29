@@ -70,8 +70,7 @@ class FeatureEngineering:
             interval_hours: Interval in hours for historical data
         """
         features = {}
-        session = get_db_session()
-        try:
+        with get_db_session() as session:
             for i in range(interval_hours, hours_back + 1, interval_hours):
                 past_timestamp = current_timestamp - timedelta(hours=i)
                 # Query the database for sensor data at the past timestamp
@@ -92,8 +91,6 @@ class FeatureEngineering:
                     features[f"{h_prefix}humidity"] = None
                     features[f"{h_prefix}light_level"] = None
             return features
-        finally:
-            session.close()
 
     @staticmethod
     def prepare_model_input(current_data, include_historical=True, include_time=True):

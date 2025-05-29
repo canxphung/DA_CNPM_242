@@ -81,7 +81,7 @@ def start_console_mode():
             logger.error(f"Error during test: {str(e)}")
         finally:
             # Stop the service
-            service.stop()
+            await service.stop()
     
     # Run the test
     asyncio.run(run_test())

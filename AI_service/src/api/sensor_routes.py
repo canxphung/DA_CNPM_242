@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 
 from src.core.greenhouse_ai_service import GreenhouseAIService
-from src.api.app import get_service
+from src.api.dependencies import get_service
 from src.database import get_db_session
 from src.database.sensor_data import SensorData
 
@@ -95,8 +95,8 @@ async def get_sensor_history(
     end_time = datetime.now()
     start_time = end_time - timedelta(hours=hours)
     
-    session = get_db_session()
-    try:
+    with get_db_session() as session:
+    
         # Get sensor data in time range
         data = session.query(SensorData).filter(
             SensorData.timestamp >= start_time,
@@ -118,5 +118,3 @@ async def get_sensor_history(
             })
         
         return result
-    finally:
-        session.close()

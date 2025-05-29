@@ -57,7 +57,13 @@ class IrrigationDecisionMaker:
         self.pump_controller = WaterPumpController()
         
         # Cấu hình tưới
-        self.min_decision_interval = int(self.config.get('control.auto_irrigation.min_decision_interval', 3600))  # giây
+        # Lấy interval từ cấu hình - đây là một cải tiến quan trọng
+        # Trước đây, min_decision_interval được hard-code là 3600 giây (1 giờ)
+        # Giờ chúng ta lấy từ cấu hình, cho phép điều chỉnh linh hoạt
+        self.min_decision_interval = self.config.get_interval('auto_decision', 900)
+        logger.info(f"Decision maker minimum interval: {self.min_decision_interval}s")
+        
+        # Trạng thái tưới tự động
         self.enabled = bool(self.config.get('control.auto_irrigation.enabled', False))
         
         # Tham số tưới

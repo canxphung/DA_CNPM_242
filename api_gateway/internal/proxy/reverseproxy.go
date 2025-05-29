@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -15,11 +16,24 @@ type ServiceProxy struct {
 	target    *url.URL
 	proxy     *httputil.ReverseProxy
 	logger    *zap.Logger
-	serviceID string // ID của dịch vụ, ví dụ: "auth", "core-operations", "greenhouse-ai"
+	serviceID string // ID của dịch vụ, ví dụ: "user-auth", "core-operation", "greenhouse-ai"
 }
 
 // NewServiceProxy creates a new service proxy
 func NewServiceProxy(targetURL string, serviceID string, logger *zap.Logger) (*ServiceProxy, error) {
+	// Xác thực serviceID
+	validServiceIDs := map[string]bool{
+		"user-auth":       true, // User & Auth Service (Node.js)
+		"auth":            true, // Backward compatibility
+		"core-operations": true,
+		"core-operation":  true, // Hỗ trợ cả hai phiên bản của serviceID
+		"greenhouse-ai":   true,
+	}
+
+	if _, isValid := validServiceIDs[serviceID]; !isValid {
+		return nil, fmt.Errorf("invalid service ID: %s", serviceID)
+	}
+
 	target, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, err
@@ -37,64 +51,86 @@ func NewServiceProxy(targetURL string, serviceID string, logger *zap.Logger) (*S
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
 
-		// Lấy đường dẫn gốc từ request đến gateway (ví dụ: "/api/v1/auth/login")
+		// IMPORTANT: Add a special header to tell backend services that CORS is being handled by the gateway
+		req.Header.Set("X-Backend-CORS-Handled", "true")
+
+		// Lấy đường dẫn gốc từ request đến gateway
 		originalPath := req.URL.Path
 		proxiedPath := originalPath // Biến tạm để sửa đổi đường dẫn
 
 		// Bước 1: Loại bỏ tiền tố API chung của gateway (/api/v1)
 		// Gateway nhận request dạng: /api/v1/{serviceID}/{backendPath}
 		const gatewayAPIPrefix = "/api/v1"
-		if strings.HasPrefix(proxiedPath, gatewayAPIPrefix) {
-			proxiedPath = strings.TrimPrefix(proxiedPath, gatewayAPIPrefix)
-		}
+		proxiedPath = strings.TrimPrefix(proxiedPath, gatewayAPIPrefix)
 
-		// Bước 2: Xử lý đường dẫn dựa trên serviceID để phù hợp với yêu cầu của backend
-		switch serviceID { // serviceID được capture từ scope của NewServiceProxy
-		case "auth":
+		// Bước 2: Xử lý đường dẫn dựa trên serviceID
+		switch serviceID {
+		case "user-auth":
 			// Đối với User & Auth Service (Node.js/Express):
-			// Node.js Express app được cấu hình với `app.use(`${config.apiPrefix}/auth`, authRoutes);`
-			// Nếu `config.apiPrefix` là `/api/v1`, thì nó mong đợi các request dạng `/api/v1/auth/...`
-			// Vì vậy, chúng ta cần đưa tiền tố `/api/v1` trở lại trước khi forward.
-			//
-			// Ví dụ:
-			// Gateway nhận:   /api/v1/auth/login
-			// proxiedPath sau Bước 1: /auth/login
-			// -> req.URL.Path = "/api/v1/auth/login" (để Node.js có thể xử lý `app.use('/api/v1/auth', authRoutes)`)
+			// Gateway nhận: /api/v1/user-auth/auth/login
+			// Cần cắt bỏ /user-auth và giữ lại /auth/login
+			// Sau đó thêm lại tiền tố /api/v1 cho Node.js service
+
+			servicePrefix := "/" + serviceID
+			proxiedPath = strings.TrimPrefix(proxiedPath, servicePrefix)
+
+			// Special handling for user paths
+			if strings.HasPrefix(proxiedPath, "/users/") {
+				// Keep /users/ path for Node.js service
+				req.URL.Path = "/api/v1" + proxiedPath
+				logger.Debug("User path special handling",
+					zap.String("original_path", originalPath),
+					zap.String("modified_path", req.URL.Path))
+			} else {
+				// Node.js Express app được cấu hình với tiền tố API
+				// Vì vậy, chúng ta cần đưa tiền tố `/api/v1` trở lại trước khi forward.
+				req.URL.Path = gatewayAPIPrefix + proxiedPath
+
+				// Xử lý trường hợp đặc biệt cho root của Node.js service
+				if proxiedPath == "/auth" || proxiedPath == "/auth/" {
+					req.URL.Path = gatewayAPIPrefix + proxiedPath
+				}
+			}
+
+		case "auth":
+			// Backward compatibility: Đối với User & Auth Service (Node.js/Express)
+			// Gateway nhận: /api/v1/auth/login (old format)
+			// Node.js Express app được cấu hình với tiền tố API
 			req.URL.Path = gatewayAPIPrefix + proxiedPath
 
 			// Xử lý trường hợp đặc biệt cho root của Node.js service
-			// Nếu Gateway nhận /api/v1/auth/ (hoặc chỉ /api/v1/auth)
-			// thì proxiedPath sau Bước 1 là /auth (hoặc /auth/)
-			// Chúng ta forward nó thành /api/v1/ để khớp với `app.get('/')` của Node.js service
 			if proxiedPath == "/auth" || proxiedPath == "/auth/" {
 				req.URL.Path = gatewayAPIPrefix + "/" // Trở thành /api/v1/
 			}
 
-		case "core-operations", "greenhouse-ai":
-			// Đối với Core Operations Service và Greenhouse AI Service (Python/FastAPI):
-			// Các dịch vụ này không mong đợi tiền tố /api/v1 hoặc serviceID trong đường dẫn của chúng.
-			//
-			// Ví dụ (Core Operations):
-			// Gateway nhận:   /api/v1/core-operations/health
-			// proxiedPath sau Bước 1: /core-operations/health
-			// -> proxiedPath sau trim serviceID: /health (FastAPI mong đợi)
-			//
-			// Ví dụ (Greenhouse AI):
-			// Gateway nhận:   /api/v1/greenhouse-ai/api/chat/predict
-			// proxiedPath sau Bước 1: /greenhouse-ai/api/chat/predict
-			// -> proxiedPath sau trim serviceID: /api/chat/predict (FastAPI mong đợi)
-			servicePrefix := "/" + serviceID // serviceID được capture từ scope của NewServiceProxy
-			if strings.HasPrefix(proxiedPath, servicePrefix) {
-				proxiedPath = strings.TrimPrefix(proxiedPath, servicePrefix)
+		case "core-operation", "core-operations":
+			// Core Operations Service expects paths like /api/control/..., /api/system/..., /api/sensors/...
+			servicePrefix := "/" + serviceID
+			proxiedPath = strings.TrimPrefix(proxiedPath, servicePrefix)
+
+			// Core Ops expects /api prefix on its paths
+			if !strings.HasPrefix(proxiedPath, "/api") && !strings.HasPrefix(proxiedPath, "/health") && !strings.HasPrefix(proxiedPath, "/version") {
+				req.URL.Path = "/api" + proxiedPath
+			} else {
+				req.URL.Path = proxiedPath
 			}
-			req.URL.Path = proxiedPath // Sử dụng đường dẫn đã cắt
+
+		case "greenhouse-ai":
+			// AI Service expects paths like /api/chat/..., /api/sensors/..., /api/analytics/...
+			servicePrefix := "/" + serviceID
+			proxiedPath = strings.TrimPrefix(proxiedPath, servicePrefix)
+
+			// AI Service expects /api prefix on most paths
+			if !strings.HasPrefix(proxiedPath, "/api") && !strings.HasPrefix(proxiedPath, "/health") && !strings.HasPrefix(proxiedPath, "/docs") {
+				req.URL.Path = "/api" + proxiedPath
+			} else {
+				req.URL.Path = proxiedPath
+			}
 
 		default:
-			// Xử lý mặc định cho các serviceID không xác định khác (nếu có), loại bỏ tiền tố serviceID
-			servicePrefix := "/" + serviceID // serviceID được capture từ scope của NewServiceProxy
-			if strings.HasPrefix(proxiedPath, servicePrefix) {
-				proxiedPath = strings.TrimPrefix(proxiedPath, servicePrefix)
-			}
+			// Xử lý mặc định cho các serviceID không xác định khác
+			servicePrefix := "/" + serviceID
+			proxiedPath = strings.TrimPrefix(proxiedPath, servicePrefix)
 			req.URL.Path = proxiedPath
 		}
 
@@ -103,12 +139,14 @@ func NewServiceProxy(targetURL string, serviceID string, logger *zap.Logger) (*S
 			req.URL.Path = "/" + req.URL.Path
 		}
 
-		// logger được capture từ scope của NewServiceProxy
+		// Log request để debug
 		logger.Debug("Proxying request",
-			zap.String("service", serviceID), // serviceID được capture
+			zap.String("service", serviceID),
 			zap.String("original_path", originalPath),
 			zap.String("proxied_path_to_backend", req.URL.Path),
-			zap.String("target_url", target.String()), // target được capture
+			zap.String("target_url", target.String()),
+			zap.String("method", req.Method),
+			zap.String("origin", req.Header.Get("Origin")),
 		)
 
 		// Thêm X-Forwarded headers nếu chưa có để backend có thông tin về request gốc
@@ -116,12 +154,11 @@ func NewServiceProxy(targetURL string, serviceID string, logger *zap.Logger) (*S
 			req.Header.Set("X-Forwarded-For", req.RemoteAddr)
 		}
 		if _, ok := req.Header["X-Forwarded-Proto"]; !ok {
-			// Sử dụng scheme của target URL để phản ánh giao thức thực tế của backend
 			req.Header.Set("X-Forwarded-Proto", target.Scheme)
 		}
 
 		// Thêm X-Gateway-Service header để dịch vụ backend biết request đến từ gateway nào
-		req.Header.Set("X-Gateway-Service", serviceID) // serviceID được capture
+		req.Header.Set("X-Gateway-Service", serviceID)
 
 		// Chuyển tiếp đường dẫn gốc dưới dạng header trong trường hợp backend cần để logging/debug
 		req.Header.Set("X-Original-Path", originalPath)
@@ -129,31 +166,87 @@ func NewServiceProxy(targetURL string, serviceID string, logger *zap.Logger) (*S
 
 	// Custom error handler để ghi log chi tiết hơn khi có lỗi proxy
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		logger.Error("Proxy error", // logger được capture
-			zap.String("service", serviceID), // serviceID được capture
+		logger.Error("Proxy error",
+			zap.String("service", serviceID),
 			zap.String("url", r.URL.String()),
 			zap.Error(err),
 			zap.String("client_ip", r.RemoteAddr),
+			zap.String("method", r.Method),
+			zap.String("origin", r.Header.Get("Origin")),
 		)
+
+		// Set CORS headers even on error responses
+		if origin := r.Header.Get("Origin"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, Origin, X-Request-ID")
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway) // 502 Bad Gateway
-		// Trả về lỗi chi tiết hơn trong môi trường phát triển, hoặc lỗi chung trong prod
-		w.Write([]byte(`{"error":"Service temporarily unavailable", "details":"` + err.Error() + `"}`))
+
+		// Tùy chỉnh thông báo lỗi dựa trên dịch vụ
+		var errorMessage string
+		switch serviceID {
+		case "user-auth", "auth":
+			errorMessage = "Dịch vụ xác thực tạm thời không khả dụng"
+		case "core-operation", "core-operations":
+			errorMessage = "Dịch vụ vận hành cốt lõi tạm thời không khả dụng"
+		case "greenhouse-ai":
+			errorMessage = "Dịch vụ AI nhà kính tạm thời không khả dụng"
+		default:
+			errorMessage = "Dịch vụ tạm thời không khả dụng"
+		}
+
+		w.Write([]byte(`{"error":"` + errorMessage + `", "details":"` + err.Error() + `"}`))
 	}
 
-	// Custom modify response handler cho mục đích debug hoặc sửa đổi response trước khi trả về client
+	// Custom modify response handler to handle CORS conflicts
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		logger.Debug("Response from backend", // logger được capture
-			zap.String("service", serviceID), // serviceID được capture
+		// Check if the backend has already added CORS headers despite our request
+		backendCORS := resp.Header.Get("Access-Control-Allow-Origin")
+
+		if backendCORS != "" {
+			// If backend added CORS headers, REMOVE them to prevent conflicts
+			logger.Debug("Removing backend CORS headers to prevent conflicts",
+				zap.String("backend_cors", backendCORS),
+				zap.String("path", resp.Request.URL.Path))
+
+			resp.Header.Del("Access-Control-Allow-Origin")
+			resp.Header.Del("Access-Control-Allow-Methods")
+			resp.Header.Del("Access-Control-Allow-Headers")
+			resp.Header.Del("Access-Control-Allow-Credentials")
+			resp.Header.Del("Access-Control-Expose-Headers")
+			resp.Header.Del("Access-Control-Max-Age")
+		}
+
+		// Add X-Proxied-By header
+		resp.Header.Set("X-Proxied-By", "API-Gateway")
+
+		logger.Debug("Response from backend",
+			zap.String("service", serviceID),
 			zap.Int("status", resp.StatusCode),
-			zap.String("path_received_by_backend", resp.Request.URL.Path),                  // Đường dẫn mà backend đã xử lý
-			zap.String("target_url", target.String()),                                      // target được capture
-			zap.String("original_client_path", resp.Request.Header.Get("X-Original-Path")), // Lấy lại đường dẫn gốc từ header
+			zap.String("path_received_by_backend", resp.Request.URL.Path),
+			zap.String("target_url", target.String()),
+			zap.String("original_client_path", resp.Request.Header.Get("X-Original-Path")),
+			zap.String("method", resp.Request.Method),
 		)
-		// Có thể thêm hoặc sửa đổi headers ở đây, ví dụ:
-		// resp.Header.Set("X-Proxied-By", "Go-Gateway")
+
 		return nil
+	}
+
+	// Điều chỉnh timeout dựa trên loại dịch vụ
+	var responseTimeout time.Duration
+	switch serviceID {
+	case "greenhouse-ai":
+		// Dịch vụ AI có thể cần nhiều thời gian hơn để xử lý
+		responseTimeout = 60 * time.Second
+	case "user-auth", "auth":
+		// Xác thực nên nhanh
+		responseTimeout = 15 * time.Second
+	default:
+		responseTimeout = 30 * time.Second
 	}
 
 	// Custom transport với timeouts để kiểm soát hành vi kết nối đến backend
@@ -161,9 +254,8 @@ func NewServiceProxy(targetURL string, serviceID string, logger *zap.Logger) (*S
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
 		DisableCompression:    true,
-		ResponseHeaderTimeout: 30 * time.Second, // Thời gian chờ nhận header từ backend
-		ExpectContinueTimeout: 1 * time.Second,  // Thời gian chờ 100-continue (nếu có)
-		// Add other transport settings if needed, e.g., TLSClientConfig
+		ResponseHeaderTimeout: responseTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
 	}
 
 	return &ServiceProxy{
@@ -176,5 +268,19 @@ func NewServiceProxy(targetURL string, serviceID string, logger *zap.Logger) (*S
 
 // ServeHTTP handles the HTTP request by forwarding it through the reverse proxy
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Handle OPTIONS requests directly
+	if r.Method == "OPTIONS" {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, Origin, X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	p.proxy.ServeHTTP(w, r)
 }

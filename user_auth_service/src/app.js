@@ -1,3 +1,4 @@
+// app.js
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -23,6 +24,18 @@ const monitoringRoutes = require('./api/monitoring.routes');
 // Khởi tạo app
 const app = express();
 
+// ----------------------------------------------------
+// THÊM DÒNG NÀY ĐỂ TIN TƯỞNG PROXY
+// Cấu hình Express để tin tưởng header X-Forwarded-For từ proxy.
+// - true: Tin tưởng tất cả proxy (ít an toàn nhất nếu có nhiều proxy không kiểm soát)
+// - 1: Tin tưởng 1 hop proxy (nếu Go Gateway là proxy duy nhất giữa client và Node.js)
+// - 'loopback': Nếu cả Gateway và Node.js chạy trên cùng một máy (127.0.0.1 hoặc ::1)
+// - IP Address/Subnet: Tin tưởng các IP hoặc dải IP cụ thể của proxy
+//
+// Trong trường hợp này, vì Go Gateway là proxy trực tiếp, `1` là lựa chọn tốt nhất.
+app.set('trust proxy', 1);
+// ----------------------------------------------------
+
 // Thiết lập status monitor
 app.use(statusMonitor());
 
@@ -35,6 +48,17 @@ app.use(cors(config.cors)); // Xử lý CORS
 app.use(express.json({ limit: '1mb' })); // Parse JSON requests
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(compression()); // Nén response
+
+// THÊM MIDDLEWARE DEBUG NÀY
+app.use((req, res, next) => {
+  logger.info(`[DEBUG] Received request body: ${JSON.stringify(req.body)}`);
+  logger.info(`[DEBUG] Request headers (Content-Type): ${req.get('Content-Type')}`);
+  next();
+});
+// ----------------------------------------------------
+
+app.use(compression()); // Nén response
+// ----------------------------------------------------
 
 // API version handling
 app.use(apiVersionMiddleware('1.0.0'));
@@ -53,7 +77,6 @@ app.use(`${config.apiPrefix}/permissions`, permissionRoutes);
 app.use(`${config.apiPrefix}/roles`, roleRoutes);
 app.use(`${config.apiPrefix}/users`, userRoleRoutes);
 app.use(`${config.apiPrefix}/monitoring`, monitoringRoutes);
-
 // Route mặc định
 app.get('/', (req, res) => {
   res.status(200).json({
