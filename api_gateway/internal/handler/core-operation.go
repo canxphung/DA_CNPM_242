@@ -32,14 +32,16 @@ func NewCoreOperationHandler(serviceURL string, logger *zap.Logger) (*CoreOperat
 func (h *CoreOperationHandler) RegisterRoutes(router *mux.Router) {
 	// All core operation endpoints require authentication (handled by middleware)
 	// Register with relative path since we're on apiV1 subrouter
-	router.PathPrefix("/core-operations/").Handler(h.serviceProxy)
 
-	// Also support the plural form for backward compatibility
+	// Support both forms for backward compatibility
 	router.PathPrefix("/core-operations/").Handler(h.serviceProxy)
+	router.PathPrefix("/core-operation/").Handler(h.serviceProxy)
 
 	h.logger.Info("Core Operation routes registered on apiV1 subrouter",
 		zap.String("service_url", h.serviceURL),
 		zap.String("service_id", "core-operations"),
-		zap.String("effective_prefix", "/api/v1/core-operations/"),
+		zap.String("effective_prefix_1", "/api/v1/core-operations/"),
+		zap.String("effective_prefix_2", "/api/v1/core-operation/"),
+		zap.String("expected_backend_format", "http://backend/api/sensors/collect"),
 	)
 }

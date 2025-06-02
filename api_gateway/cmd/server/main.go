@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,7 +49,7 @@ func main() {
 	// Create metrics middleware
 	metricsMiddleware := middleware.NewMetricsMiddleware(registry)
 
-	// Create logging middleware
+	// // Create logging middleware
 	loggingMiddleware := middleware.NewLoggingMiddleware(logger)
 
 	// Create CORS middleware - UPDATED: Pass logger to CORS middleware
@@ -99,7 +101,110 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `{"status":"healthy","version":"v1"}`)
 	}).Methods("GET")
+	router.HandleFunc("/debug/echo", func(w http.ResponseWriter, r *http.Request) {
+		logger := logger.With(
+			zap.String("handler", "debug-echo"),
+			zap.String("method", r.Method),
+		)
 
+		// Read request body
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			logger.Error("Failed to read request body", zap.Error(err))
+			http.Error(w, "Failed to read body", http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+
+		// Log what we received
+		logger.Info("Debug echo handler",
+			zap.String("request_body", string(body)),
+			zap.Int("body_length", len(body)),
+		)
+
+		// Prepare response
+		response := map[string]interface{}{
+			"message":       "Echo response",
+			"method":        r.Method,
+			"path":          r.URL.Path,
+			"headers":       r.Header,
+			"body_received": string(body),
+			"timestamp":     time.Now().Format(time.RFC3339),
+		}
+
+		// Set headers
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Debug-Handler", "true")
+
+		// Write response
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			logger.Error("Failed to encode response", zap.Error(err))
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
+
+		// Force flush if available
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+			logger.Debug("Response flushed")
+		}
+
+		logger.Info("Debug response sent successfully")
+	}).Methods("GET", "POST", "PUT")
+
+	// Debug endpoint to test large response
+	router.HandleFunc("/debug/large", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Generate large response
+		data := make([]map[string]interface{}, 1000)
+		for i := 0; i < 1000; i++ {
+			data[i] = map[string]interface{}{
+				"id":          i,
+				"name":        fmt.Sprintf("Item %d", i),
+				"description": "This is a test item with some data to make the response larger",
+				"timestamp":   time.Now().Format(time.RFC3339),
+			}
+		}
+
+		response := map[string]interface{}{
+			"count": len(data),
+			"data":  data,
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			logger.Error("Failed to encode large response", zap.Error(err))
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
+
+		// Force flush
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}).Methods("GET")
+
+	// Debug endpoint to test streaming response
+	router.HandleFunc("/debug/stream", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		// Stream data
+		for i := 0; i < 10; i++ {
+			fmt.Fprintf(w, "Chunk %d: %s\n", i, time.Now().Format(time.RFC3339))
+			flusher.Flush()
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		fmt.Fprint(w, "Stream complete\n")
+		flusher.Flush()
+	}).Methods("GET")
 	// Create API v1 subrouter
 	apiV1 := router.PathPrefix("/api/v1").Subrouter()
 
@@ -127,7 +232,7 @@ func main() {
 			zap.String("addr", server.Addr),
 			zap.Strings("services", []string{
 				"user-auth: " + cfg.Services.UserAuthServiceURL,
-				"core-operation: " + cfg.Services.CoreOperationServiceURL,
+				"core-operations: " + cfg.Services.CoreOperationServiceURL,
 				"greenhouse-ai: " + cfg.Services.AIServiceURL,
 			}),
 		)

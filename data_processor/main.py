@@ -78,9 +78,17 @@ async def lifespan(app: FastAPI):
     # Khởi tạo DataManager và bắt đầu thu thập dữ liệu ngầm
     data_manager = DataManager()
     # Lấy interval từ cấu hình mới
-    collection_interval = factory.get_config_loader().get_interval('sensor_data', 60)
+    collection_interval = factory.get_config_loader().get_interval('sensor_data', 180)
     data_manager.start_background_collection(interval=collection_interval)
-    logger.info(f"Started background data collection (interval: {collection_interval}s)")
+    logger.info(f"Started optimized background collection (interval: {collection_interval}s)")
+    
+    # Log performance config
+    logger.info("Performance optimizations enabled:")
+    logger.info("- Cache-first strategy: ENABLED")
+    logger.info("- Rate limiting: 30s minimum between Adafruit calls")
+    logger.info("- Stale-while-revalidate: ENABLED")
+    
+    # yield
     
     # Khởi động hệ thống tưới
     try:

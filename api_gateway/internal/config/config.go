@@ -74,8 +74,8 @@ func LoadConfig() *Config {
 
 	// Set defaults
 	viper.SetDefault("server.port", "8000")
-	viper.SetDefault("server.readTimeout", "5s")
-	viper.SetDefault("server.writeTimeout", "10s")
+	viper.SetDefault("server.readTimeout", "30s")
+	viper.SetDefault("server.writeTimeout", "30s")
 	viper.SetDefault("server.shutdownTimeout", "5s")
 
 	viper.SetDefault("jwt.expirationMinutes", 30)

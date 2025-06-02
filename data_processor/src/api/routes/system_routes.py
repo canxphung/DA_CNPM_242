@@ -4,6 +4,7 @@ Routes API cho quản lý hệ thống.
 import logging
 import os
 from typing import Dict, Any, Optional, List
+from src.core.data.data_manager import DataManager
 from fastapi import APIRouter, HTTPException, Query, Body, Path, Depends
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -11,7 +12,7 @@ from datetime import datetime
 from src.infrastructure.config.system_config import SystemConfigManager
 from src.infrastructure.dependencies import handle_exceptions
 from src.infrastructure.exceptions import ValidationError, ConfigurationError
-
+from src.infrastructure.monitoring.performance_monitor import PerformanceMonitor
 # Khởi tạo logger
 logger = logging.getLogger(__name__)
 
@@ -159,3 +160,16 @@ async def get_system_info():
         "build_date": os.getenv("BUILD_DATE", "unknown"),
         "commit_hash": os.getenv("COMMIT_HASH", "unknown")
     }
+@router.get("/metrics", summary="Lấy metrics hiệu suất")
+async def get_performance_metrics():
+    """Lấy metrics về hiệu suất hệ thống."""
+    
+    monitor = PerformanceMonitor()
+    metrics = monitor.get_metrics()
+    
+    # Thêm thông tin từ DataManager
+    data_manager = DataManager()
+    if hasattr(data_manager, 'get_collection_stats'):
+        metrics["data_collection"] = data_manager.get_collection_stats()
+    
+    return metrics

@@ -1,12 +1,12 @@
 // src/utils/api.js
 import axios from 'axios';
-import { API_BASE_URL, ERROR_MESSAGES, HTTP_STATUS, STORAGE_KEYS } from './constants';
+import { API_BASE_URL, API_ENDPOINTS, ERROR_MESSAGES, HTTP_STATUS, STORAGE_KEYS, USER_AUTH_PREFIX, CORE_OPERATIONS_PREFIX, AI_SERVICE_PREFIX } from './constants';
 
 class ApiClient {
   constructor() {
     this.client = axios.create({
       baseURL: API_BASE_URL, // API Gateway URL
-      timeout: 15000,
+      timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
       },
@@ -190,6 +190,7 @@ class ApiClient {
     localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
     localStorage.removeItem(STORAGE_KEYS.USER_DATA);
     localStorage.removeItem(STORAGE_KEYS.PERMISSIONS);
+    localStorage.removeItem(STORAGE_KEYS.USER_ROLES);
   }
 
   async refreshAccessToken() {

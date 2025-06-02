@@ -1,6 +1,9 @@
 package middleware
 
 import (
+	"bufio"
+	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -69,7 +72,11 @@ func (m *MetricsMiddleware) CollectMetrics(next http.Handler) http.Handler {
 		defer m.requestsInFlight.WithLabelValues(method, path).Dec()
 
 		// Create a custom response writer to capture status code
-		respWriter := &metricsResponseWriter{w, http.StatusOK}
+		respWriter := &metricsResponseWriter{
+			ResponseWriter: w,
+			status:         http.StatusOK,
+			written:        false,
+		}
 
 		// Track request duration
 		start := time.Now()
@@ -113,11 +120,50 @@ func (m *MetricsMiddleware) detectService(path string) string {
 // Custom response writer for metrics
 type metricsResponseWriter struct {
 	http.ResponseWriter
-	status int
+	status  int
+	written bool
 }
 
 // WriteHeader captures the status code for metrics
 func (mrw *metricsResponseWriter) WriteHeader(code int) {
-	mrw.status = code
-	mrw.ResponseWriter.WriteHeader(code)
+	if !mrw.written {
+		mrw.status = code
+		mrw.ResponseWriter.WriteHeader(code)
+	}
+}
+
+// Write implements the http.ResponseWriter interface
+func (mrw *metricsResponseWriter) Write(data []byte) (int, error) {
+	if !mrw.written {
+		mrw.written = true
+		// Ensure status code is written before body
+		if mrw.status == 0 {
+			mrw.status = http.StatusOK
+		}
+		mrw.ResponseWriter.WriteHeader(mrw.status)
+	}
+	return mrw.ResponseWriter.Write(data)
+}
+
+// Flush implements the http.Flusher interface if the underlying ResponseWriter supports it
+func (mrw *metricsResponseWriter) Flush() {
+	if flusher, ok := mrw.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// CloseNotify implements the http.CloseNotifier interface if the underlying ResponseWriter supports it
+func (mrw *metricsResponseWriter) CloseNotify() <-chan bool {
+	if notifier, ok := mrw.ResponseWriter.(http.CloseNotifier); ok {
+		return notifier.CloseNotify()
+	}
+	return nil
+}
+
+// Hijack implements the http.Hijacker interface if the underlying ResponseWriter supports it
+func (mrw *metricsResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := mrw.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, fmt.Errorf("ResponseWriter does not support Hijack")
 }

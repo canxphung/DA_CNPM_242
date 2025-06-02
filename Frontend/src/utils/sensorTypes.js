@@ -1,115 +1,128 @@
 // src/utils/sensorTypes.js
 
-/**
- * Enum cho các loại cảm biến
- */
+export const SensorStatus = {
+  NORMAL: 'normal',
+  WARNING: 'warning',
+  CRITICAL: 'critical',
+  ERROR: 'error',
+  UNKNOWN: 'unknown',
+  OPTIMAL: 'optimal',
+  WARNING_HIGH: 'warning_high',
+  WARNING_LOW: 'warning_low',
+  CRITICAL_HIGH: 'critical_high',
+  CRITICAL_LOW: 'critical_low'
+};
+
 export const SensorType = {
+  TEMPERATURE: 'temperature',
+  MOISTURE: 'moisture',
   LIGHT: 'light',
-  TEMPERATURE: 'temperature', 
-  HUMIDITY: 'humidity',
-  SOIL_MOISTURE: 'soil_moisture'
+  SOIL: 'soil'
 };
 
-/**
- * Mapping từ frontend keys sang backend keys
- */
-export const SENSOR_MAPPING = {
-  // Frontend key -> Backend key
-  light: SensorType.LIGHT,
-  temperature: SensorType.TEMPERATURE,
-  moisture: SensorType.HUMIDITY,        // Frontend dùng 'moisture' cho air humidity
-  soil: SensorType.SOIL_MOISTURE        // Frontend dùng 'soil' cho soil moisture
+export const SensorUnit = {
+  TEMPERATURE: '°C',
+  MOISTURE: '%',
+  LIGHT: 'Lux',
+  SOIL: '%'
 };
 
-/**
- * Mapping ngược từ backend keys sang frontend keys
- */
-export const BACKEND_TO_FRONTEND_MAPPING = {
-  [SensorType.LIGHT]: 'light',
-  [SensorType.TEMPERATURE]: 'temperature',
-  [SensorType.HUMIDITY]: 'moisture',
-  [SensorType.SOIL_MOISTURE]: 'soil'
-};
-
-/**
- * Cấu hình cho từng loại sensor
- */
-export const SENSOR_CONFIG = {
-  [SensorType.LIGHT]: {
-    name: 'Cường độ ánh sáng',
-    unit: 'Lux',
-    icon: '☀️',
-    color: 'rgb(234, 179, 8)',
-    thresholds: {
-      low: 500,
-      high: 2000,
-      optimal: { min: 800, max: 1500 }
-    }
+export const SensorThresholds = {
+  temperature: {
+    critical_low: 10,
+    warning_low: 15,
+    optimal_min: 20,
+    optimal_max: 30,
+    warning_high: 35,
+    critical_high: 40
   },
-  [SensorType.TEMPERATURE]: {
-    name: 'Nhiệt độ',
-    unit: '°C', 
-    icon: '🌡️',
-    color: 'rgb(239, 68, 68)',
-    thresholds: {
-      low: 18,
-      high: 32,
-      optimal: { min: 22, max: 28 }
-    }
+  moisture: {
+    critical_low: 20,
+    warning_low: 30,
+    optimal_min: 50,
+    optimal_max: 80,
+    warning_high: 85,
+    critical_high: 90
   },
-  [SensorType.HUMIDITY]: {
-    name: 'Độ ẩm không khí',
-    unit: '%',
-    icon: '💧',
-    color: 'rgb(59, 130, 246)',
-    thresholds: {
-      low: 40,
-      high: 80,
-      optimal: { min: 50, max: 70 }
-    }
+  light: {
+    critical_low: 100,
+    warning_low: 300,
+    optimal_min: 500,
+    optimal_max: 1500,
+    warning_high: 1800,
+    critical_high: 2000
   },
-  [SensorType.SOIL_MOISTURE]: {
-    name: 'Độ ẩm đất',
-    unit: '%',
-    icon: '🌱',
-    color: 'rgb(34, 197, 94)',
-    thresholds: {
-      low: 30,
-      high: 80,
-      optimal: { min: 40, max: 70 }
-    }
+  soil: {
+    critical_low: 20,
+    warning_low: 30,
+    optimal_min: 40,
+    optimal_max: 60,
+    warning_high: 70,
+    critical_high: 80
   }
 };
 
-/**
- * Trạng thái sensor
- */
-export const SensorStatus = {
-  NORMAL: 'normal',
-  WARNING: 'warning', 
-  CRITICAL: 'critical',
-  ERROR: 'error',
-  UNKNOWN: 'unknown'
+export const getStatusFromValue = (sensorType, value) => {
+  if (value === null || value === undefined) {
+    return SensorStatus.UNKNOWN;
+  }
+
+  const thresholds = SensorThresholds[sensorType];
+  if (!thresholds) {
+    return SensorStatus.UNKNOWN;
+  }
+
+  if (value <= thresholds.critical_low) {
+    return SensorStatus.CRITICAL_LOW;
+  } else if (value <= thresholds.warning_low) {
+    return SensorStatus.WARNING_LOW;
+  } else if (value >= thresholds.critical_high) {
+    return SensorStatus.CRITICAL_HIGH;
+  } else if (value >= thresholds.warning_high) {
+    return SensorStatus.WARNING_HIGH;
+  } else if (value >= thresholds.optimal_min && value <= thresholds.optimal_max) {
+    return SensorStatus.OPTIMAL;
+  } else {
+    return SensorStatus.NORMAL;
+  }
 };
 
-/**
- * Lấy config cho sensor theo frontend key
- */
-export const getSensorConfig = (frontendKey) => {
-  const backendKey = SENSOR_MAPPING[frontendKey];
-  return SENSOR_CONFIG[backendKey];
+export const getStatusColor = (status) => {
+  switch (status) {
+    case SensorStatus.OPTIMAL:
+    case SensorStatus.NORMAL:
+      return 'text-green-600';
+    case SensorStatus.WARNING:
+    case SensorStatus.WARNING_HIGH:
+    case SensorStatus.WARNING_LOW:
+      return 'text-yellow-600';
+    case SensorStatus.CRITICAL:
+    case SensorStatus.CRITICAL_HIGH:
+    case SensorStatus.CRITICAL_LOW:
+      return 'text-red-600';
+    case SensorStatus.ERROR:
+      return 'text-red-700';
+    default:
+      return 'text-gray-500';
+  }
 };
 
-/**
- * Chuyển đổi frontend key sang backend key
- */
-export const toBackendKey = (frontendKey) => {
-  return SENSOR_MAPPING[frontendKey] || frontendKey;
-};
-
-/**
- * Chuyển đổi backend key sang frontend key
- */
-export const toFrontendKey = (backendKey) => {
-  return BACKEND_TO_FRONTEND_MAPPING[backendKey] || backendKey;
+export const getStatusBgColor = (status) => {
+  switch (status) {
+    case SensorStatus.OPTIMAL:
+    case SensorStatus.NORMAL:
+      return 'bg-green-50';
+    case SensorStatus.WARNING:
+    case SensorStatus.WARNING_HIGH:
+    case SensorStatus.WARNING_LOW:
+      return 'bg-yellow-50';
+    case SensorStatus.CRITICAL:
+    case SensorStatus.CRITICAL_HIGH:
+    case SensorStatus.CRITICAL_LOW:
+      return 'bg-red-50';
+    case SensorStatus.ERROR:
+      return 'bg-red-100';
+    default:
+      return 'bg-gray-50';
+  }
 };

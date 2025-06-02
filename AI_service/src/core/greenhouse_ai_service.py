@@ -290,7 +290,15 @@ class GreenhouseAIService:
         sensor_data = await self.core_ops_integration.fetch_sensor_data()
         if not sensor_data or len(sensor_data) == 0:
             sensor_data = self._get_current_sensor_data()
-        
+        # Nếu vẫn không có dữ liệu
+        if not sensor_data or sensor_data.get("soil_moisture") is None:
+            logger.warning("Không có dữ liệu độ ẩm đất, không thể tạo khuyến nghị tưới.")
+            return {
+                "id": recommendation_id,
+                "status": "skipped",
+                "reason": "Missing soil moisture data",
+                "timestamp": datetime.now().isoformat()
+            }
         # Chuyển đổi định dạng cảm biến nếu cần
         if isinstance(sensor_data, list) and len(sensor_data) > 0:
             sensor_data = sensor_data[0]  # Lấy điểm dữ liệu mới nhất

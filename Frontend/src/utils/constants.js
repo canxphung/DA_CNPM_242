@@ -2,9 +2,9 @@
 export const API_BASE_URL = "http://localhost:3000/api/v1"; // Gateway URL
 
 // Service prefixes theo API Gateway routing
-const USER_AUTH_PREFIX = "";  // Gateway đã xử lý prefix
-const CORE_OPERATIONS_PREFIX = "";  // Gateway đã xử lý prefix
-const AI_SERVICE_PREFIX = "";  // Gateway đã xử lý prefix
+export const USER_AUTH_PREFIX = "";  // Gateway đã xử lý prefix
+export const CORE_OPERATIONS_PREFIX = "";  // Gateway đã xử lý prefix
+export const AI_SERVICE_PREFIX = "";  // Gateway đã xử lý prefix
 
 export const API_ENDPOINTS = {
   // User Authentication & Management Service
@@ -37,30 +37,30 @@ export const API_ENDPOINTS = {
   CORE_OPERATIONS: {
     // Control routes
     CONTROL: {
-      STATUS: `/core-operations/api/control/status`,
-      HISTORY: `/core-operations/api/control/history`,
-      SYSTEM_ACTION: (action) => `/core-operations/api/control/system/${action}`,
-      PUMP_ACTION: (action) => `/core-operations/api/control/pump/${action}`,
-      PUMP_STATUS: `/core-operations/api/control/pump/status`,
-      SCHEDULES_BASE: `/core-operations/api/control/schedules`,
-      SCHEDULE_BY_ID: (id) => `/core-operations/api/control/schedules/${id}`,
-      AUTO_IRRIGATION_CONFIG: `/core-operations/api/control/auto`,
-      AUTO_IRRIGATION_ACTION: (action) => `/core-operations/api/control/auto/${action}`,
-      RECOMMENDATION_RECEIVE: `/core-operations/api/control/recommendation`,
+      STATUS: `/core-operations/control/status`,
+      HISTORY: `/core-operations/control/history`,
+      SYSTEM_ACTION: (action) => `/core-operations/control/system/${action}`,
+      PUMP_ACTION: (action) => `/core-operations/control/pump/${action}`,
+      PUMP_STATUS: `/core-operations/control/pump/status`,
+      SCHEDULES_BASE: `/core-operations/control/schedules`,
+      SCHEDULE_BY_ID: (id) => `/core-operations/control/schedules/${id}`,
+      AUTO_IRRIGATION_CONFIG: `/core-operations/control/auto`,
+      AUTO_IRRIGATION_ACTION: (action) => `/core-operations/control/auto/${action}`,
+      RECOMMENDATION_RECEIVE: `/core-operations/control/recommendation`,
     },
     // System routes
-    SYSTEM_CONFIG: `/core-operations/api/system/config`,
-    SYSTEM_CONFIG_BULK: `/core-operations/api/system/config/bulk`,
-    SYSTEM_CONFIG_RESET: `/core-operations/api/system/config/reset`,
-    SYSTEM_INFO: `/core-operations/api/system/info`,
+    SYSTEM_CONFIG: `/core-operations/system/config`,
+    SYSTEM_CONFIG_BULK: `/core-operations/system/config/bulk`,
+    SYSTEM_CONFIG_RESET: `/core-operations/system/config/reset`,
+    SYSTEM_INFO: `/core-operations/system/info`,
     // Sensor routes
     SENSORS: {
-      LIST_AVAILABLE: `/core-operations/api/sensors`,
-      COLLECT_ALL: `/core-operations/api/sensors/collect`,
-      SNAPSHOT: `/core-operations/api/sensors/snapshot`,
-      ANALYZE: `/core-operations/api/sensors/analyze`,
-      ANALYZE_SPECIFIC: (type) => `/core-operations/api/sensors/analyze/${type}`,
-      BY_TYPE: (type) => `/core-operations/api/sensors/${type}`,
+      LIST_AVAILABLE: `/core-operations/sensors`,
+      COLLECT_ALL: `/core-operations/sensors/collect`,
+      SNAPSHOT: `/core-operations/sensors/snapshot`,
+      ANALYZE: `/core-operations/sensors/analyze`,
+      ANALYZE_SPECIFIC: (type) => `/core-operations/sensors/analyze/${type}`,
+      BY_TYPE: (type) => `/core-operations/sensors/${type}`,
     },
     // Health & Version
     HEALTH: `/core-operations/health`,
@@ -155,6 +155,7 @@ export const STORAGE_KEYS = {
   REFRESH_TOKEN: "smartwater_refresh_token",
   USER_DATA: "smartwater_user_data",
   PERMISSIONS: "smartwater_user_permissions",
+  USER_ROLES: "smartwater_user_roles", // Added this
 };
 
 // Permissions (from AuthContext.jsx - should be kept in sync or imported)

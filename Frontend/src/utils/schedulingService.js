@@ -116,31 +116,90 @@ class SchedulingService {
 
   // --- IRRIGATION EXECUTION HISTORY ---
   // THIS IS A PLACEHOLDER - Actual implementation depends on backend API
+  // utils/schedulingService.js
+
+// ... (code khác) ...
+
   async getIrrigationHistory(options = {}) {
-    const { days = 7, forceRefresh = false } = options;
-    
+    const { days = 7, forceRefresh = false } = options; // forceRefresh chưa được dùng, có thể thêm logic cache sau
+
     try {
-      // Sử dụng Core Ops control/history endpoint
+      console.log("Fetching irrigation history from Core Ops:", API_ENDPOINTS.CORE_OPERATIONS.CONTROL.HISTORY, { params: { days } });
       const response = await api.get(API_ENDPOINTS.CORE_OPERATIONS.CONTROL.HISTORY, {
-        params: { days } // Cần xác nhận query params
+        params: { days }
       });
-      
-      // Transform data to match ScheduleContext expectations
-      const historyData = response.data.map(item => ({
-        id: item.id,
-        title: item.description || 'Tưới tự động',
-        date: new Date(item.timestamp).toLocaleDateString("vi-VN"),
-        time: new Date(item.timestamp).toLocaleTimeString("vi-VN"),
-        moisture: item.soil_moisture_improvement || "N/A",
-        temperature: "N/A",
-        duration_minutes: item.duration_minutes || Math.round(item.duration_seconds / 60),
-        status: item.status || 'completed'
-      }));
-      
+      console.log("Irrigation History API Response Data:", response.data);
+
+      // KIỂM TRA CẤU TRÚC response.data VÀ TRUY CẬP ĐÚNG MẢNG
+      // Ví dụ: Nếu bạn muốn map qua mảng "irrigation_events"
+      let rawHistoryArray = [];
+      if (response.data && Array.isArray(response.data.irrigation_events)) {
+          rawHistoryArray = response.data.irrigation_events;
+      } else if (response.data && Array.isArray(response.data.auto_decisions)) {
+          // Hoặc nếu bạn muốn dùng auto_decisions, hoặc kết hợp cả hai
+          // rawHistoryArray = response.data.auto_decisions;
+          console.warn("Using 'auto_decisions' for history. Verify if this is intended.");
+      } else if (Array.isArray(response.data)) {
+          // Trường hợp không thể xảy ra dựa trên backend code hiện tại, nhưng để phòng hờ
+          rawHistoryArray = response.data;
+          console.warn("API response.data for history is an array directly, which is unexpected based on backend code.");
+      } else {
+        console.error("Error fetching irrigation history: response.data is not in expected format or relevant array is missing.", response.data);
+        return { success: false, error: "Dữ liệu lịch sử không đúng định dạng.", data: [] };
+      }
+
+      // Bây giờ map trên rawHistoryArray
+      const historyData = rawHistoryArray.map(item => {
+        // Cần điều chỉnh item access dựa trên cấu trúc thực tế của các object trong mảng pump_history hoặc decision_history
+        // Ví dụ, nếu `item` từ `pump_history` có cấu trúc:
+        // { id, timestamp, duration_seconds, source, details: { schedule_name }, status }
+        // Và bạn muốn nó khớp với cấu trúc frontend:
+        // { id, title, date, time, moisture, temperature, duration_minutes, status }
+
+        let title = 'Hoạt động tưới'; // Tiêu đề mặc định
+        if (item.source === 'schedule' && item.details && item.details.schedule_name) {
+          title = `Lịch: ${item.details.schedule_name}`;
+        } else if (item.source === 'auto' && item.details && item.details.reason) {
+          title = `Tự động: ${item.details.reason.substring(0,30)}...`;
+        } else if (item.source === 'manual') {
+          title = 'Tưới thủ công';
+        } else if (item.description) { // Nếu từ auto_decisions có description
+          title = item.description;
+        }
+
+
+        // Duration từ pump_history (duration_seconds) hoặc decision_history (có thể không có duration trực tiếp)
+        let durationMinutes = 'N/A';
+        if (typeof item.duration_seconds === 'number') {
+          durationMinutes = Math.round(item.duration_seconds / 60);
+        } else if (typeof item.duration_minutes === 'number') { // Nếu nó đã có sẵn
+            durationMinutes = item.duration_minutes;
+        }
+        // Logic tương tự cho các trường khác như soil_moisture_improvement, status từ item
+        // Dựa trên cấu trúc thực tế của item từ pump_history hoặc decision_history
+        
+        return {
+          id: item.id, // id của bản ghi lịch sử
+          title: title,
+          date: new Date(item.timestamp).toLocaleDateString("vi-VN"),
+          time: new Date(item.timestamp).toLocaleTimeString("vi-VN"),
+          moisture: item.soil_moisture_improvement || "N/A", // Cần kiểm tra nguồn gốc trường này
+          temperature: "N/A", // Hiện không có trong data từ manager
+          duration_minutes: durationMinutes,
+          status: item.status || 'completed' // 'completed', 'failed', 'pending' (tùy thuộc backend)
+        };
+      });
+
       return { success: true, data: historyData };
     } catch (error) {
-      console.error("Error fetching irrigation history:", error);
-      return { success: false, error: error.message, data: [] };
+      console.error("Error fetching irrigation history (service):", error.message, error.originalError || error);
+      // Trả về cached data (nếu có) hoặc mảng rỗng khi lỗi
+      // const cached = this._getCache(cacheKeyForHistory); // Cần định nghĩa cacheKeyForHistory
+      return {
+        success: false,
+        error: error.message || ERROR_MESSAGES.SERVER_ERROR,
+        data: [] // Hoặc cached || []
+      };
     }
   }
 }

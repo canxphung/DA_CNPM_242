@@ -1,0 +1,1 @@
+{"value": {"choices": [{"message": {"content": "```json\n{\n  \"intent\": \"turn_on_pump\",\n  \"entities\": {\n    \"duration\": \"5\",\n    \"unit\": \"minutes\"\n  }\n}\n```\n"}}], "model": "gemini-2.0-flash", "usage": {"total_tokens": 98}}, "created_at": 1748794432.1767356, "expires_at": 1748880832.1767364}

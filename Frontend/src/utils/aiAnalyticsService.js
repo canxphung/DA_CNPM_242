@@ -1,36 +1,31 @@
 // utils/aiAnalyticsService.js
 import api from "./api";
-import { API_ENDPOINTS, ERROR_MESSAGES } from "./constants";
+import { API_ENDPOINTS, ERROR_MESSAGES } from "./constants"; // ERROR_MESSAGES vẫn cần thiết cho các lỗi khác
 
 class AIAnalyticsService {
   constructor() {
     this.cache = new Map();
     this.cacheConfig = {
-      historicalAnalysis: { ttl: 300000, key: 'ai_analytics_hist' }, // 5 min
-      optimizationRecs: { ttl: 3600000, key: 'ai_analytics_opt' }, // 1 hour
-      modelPerformance: { ttl: 7200000, key: 'ai_analytics_model_perf' } // 2 hours
+      historicalAnalysis: { ttl: 300000, key: 'ai_analytics_hist' },
+      optimizationRecs: { ttl: 3600000, key: 'ai_analytics_opt' },
+      modelPerformance: { ttl: 7200000, key: 'ai_analytics_model_perf' }
     };
-     // Other properties if needed
   }
 
-  _isCacheValid(key, ttl) { /* ... (same as in aiRecommendationsService) ... */ 
+  _isCacheValid(key, ttl) { /* ... (như cũ) ... */ 
     const cached = this.cache.get(key);
     if (!cached) return false;
     return (Date.now() - (cached.timestamp || 0)) < ttl;
   }
-  _setCache(key, data) { /* ... (same) ... */ 
+  _setCache(key, data) { /* ... (như cũ) ... */ 
     this.cache.set(key, { data, timestamp: Date.now() });
   }
-  _getCache(key) { /* ... (same) ... */ 
+  _getCache(key) { /* ... (như cũ) ... */ 
     return this.cache.get(key)?.data || null;
   }
   _clearCache(key) { this.cache.delete(key); }
 
-
-  // Get historical analysis from AI Service
   async getHistoricalAnalysis(options = {}) {
-    // API: GET /api/analytics/history?days=X
-    // Response: { period, sensor_stats: { soil_moisture: {min,max,avg,median}, ...}, irrigation_events, ... }
     const { days = 7, forceRefresh = false } = options;
     const cacheKey = `${this.cacheConfig.historicalAnalysis.key}_${days}`;
 
@@ -42,99 +37,111 @@ class AIAnalyticsService {
       }
     }
     try {
-      console.log("Fetching AI historical analysis for ${days} days:", API_ENDPOINTS.AI.ANALYTICS_HISTORY);
+      console.log(`Fetching AI historical analysis for ${days} days:`, API_ENDPOINTS.AI.ANALYTICS_HISTORY);
       const response = await api.get(API_ENDPOINTS.AI.ANALYTICS_HISTORY, { params: { days } });
-      if (response.data) {
-        // The response itself is good for display. We might need to transform `sensor_stats`
-        // into a format suitable for the `SensorChart` if used directly for raw time series.
-        // However, `GET /api/analytics/history` seems to return aggregated stats, not raw time series.
-        // `AdvancedAnalytics.jsx` currently uses SensorChart expecting labels/values for trends.
-        //
-        // **DECISION for now:** /api/analytics/history returns STATS.
-        // The chart on AdvancedAnalytics for "Dự đoán Xu hướng" MIGHT need raw history.
-        // If so, it should use GET /api/sensors/history (from AI service), not /api/analytics/history.
-        // Let's assume AdvancedAnalytics.jsx's "Dự đoán Xu hướng" chart will use `/api/sensors/history` via `sensorService` or similar call.
-        // And `/api/analytics/history` is for textual/statistical display.
-        // OR, `response.data` for `/api/analytics/history` also includes a `chart` object similar to what AdvancedAnalytics.jsx expects for `SensorChart`.
-        // Based on API doc: `/api/analytics/history` provides "sensor_stats", which are aggregates.
-        // The provided AdvancedAnalytics.jsx calls `/greenhouse-ai/api/analytics/${type}` expecting `chart: {labels, values}`.
-        // This implies `/api/analytics/prediction` and `/api/analytics/correlation` might exist.
-        // Let's assume these exist on AI Service for now and this function targets them based on type.
-
-        this._setCache(cacheKey + "_stats", response.data); // Cache stats part
-        return { success: true, data: response.data }; // data has period, sensor_stats etc.
+      // API response is now always 200 OK, check for 'message' field from backend
+      if (response.data) { // response.data sẽ luôn tồn tại nếu API thành công (200 OK)
+        this._setCache(cacheKey + "_stats", response.data);
+        // Nếu có message từ backend, có thể dùng nó để bổ sung thông tin
+        let analysisText = `Phân tích lịch sử cho giai đoạn ${response.data.period}.`;
+        if(response.data.message) {
+            analysisText += `\nLưu ý: ${response.data.message}`;
+        }
+        // Vẫn trả về data để UI có thể hiển thị stats (dù có thể là 0)
+        return { success: true, data: {...response.data, derivedText: analysisText} }; 
       }
-      throw new Error("Invalid data from AI historical analysis API.");
+      // Về lý thuyết không nên rơi vào đây nếu API luôn trả 200 và có data
+      throw new Error("Invalid data from AI historical analysis API despite 200 OK."); 
     } catch (error) {
       console.error("Error fetching AI historical analysis (service):", error.message, error.originalError);
-      return { success: false, error: error.message || ERROR_MESSAGES.SERVER_ERROR, data: this._getCache(cacheKey + "_stats") };
+      // Lỗi ở đây thường là network error hoặc lỗi 500 từ server, không phải 404 vì không đủ dữ liệu
+      return { 
+          success: false, 
+          error: error.message || ERROR_MESSAGES.SERVER_ERROR, 
+          data: this._getCache(cacheKey + "_stats") // trả về cache cũ nếu có lỗi
+        };
     }
   }
   
-  // NEW: Specific function for chart data needed by AdvancedAnalytics.jsx's tabs
-  // This maps to what AdvancedAnalytics.jsx calls `/greenhouse-ai/api/analytics/${type}`
-  // type: 'prediction' or 'correlation'
   async getAnalyticsChartData(type, options = {}) {
-    const { startDate, endDate, forceRefresh = false } = options;
+    const { startDate, endDate, forceRefresh = false, days = 30 } = options; // days default cho API
     
-    if (type === 'prediction') {
-      // Sử dụng analytics/optimize endpoint
-      const response = await api.get(API_ENDPOINTS.AI.ANALYTICS_OPTIMIZE, {
-        params: { days: 30 } // Có thể tính từ startDate/endDate
-      });
-      
-      // Transform schedule data to chart format
-      const chartData = {
-        labels: response.data.schedule.map(item => 
-          `${item.hour}:00`
-        ),
-        values: response.data.schedule.map(item => 
-          item.effectiveness * 100
-        )
-      };
-      
-      return {
-        success: true,
-        data: {
-          chart: chartData,
-          text: response.data.explanation || "Phân tích dự đoán hiệu quả tưới theo giờ"
+    try {
+      if (type === 'prediction') {
+        // API_ENDPOINTS.AI.ANALYTICS_OPTIMIZE sẽ trả về { schedule: [], explanation: "..." } nếu không đủ dữ liệu
+        const response = await api.get(API_ENDPOINTS.AI.ANALYTICS_OPTIMIZE, {
+          params: { days } // days truyền vào từ options hoặc default
+        });
+        
+        let chartData = { labels: [], values: [] };
+        let textResult = response.data.explanation || "Không có diễn giải cho dự đoán này.";
+
+        if (response.data && response.data.schedule && response.data.schedule.length > 0) {
+          chartData = {
+            labels: response.data.schedule.map(item => `${item.hour}:00`),
+            values: response.data.schedule.map(item => item.effectiveness_score * 100) // Sửa thành effectiveness_score
+          };
+        } else if (response.data && response.data.explanation) {
+            // Explanation sẽ chứa lý do không có schedule
+            textResult = response.data.explanation;
         }
-      };
-    } 
-    else if (type === 'correlation') {
-      // Sử dụng analytics/history để phân tích tương quan
-      const response = await api.get(API_ENDPOINTS.AI.ANALYTICS_HISTORY, {
-        params: { days: 30 }
-      });
-      
-      // Calculate correlations from sensor stats
-      const stats = response.data.sensor_stats;
-      const correlationData = {
-        labels: ['Độ ẩm đất', 'Nhiệt độ', 'Độ ẩm không khí', 'Ánh sáng'],
-        values: [
-          1.0, // Soil moisture correlation with irrigation
-          -0.3, // Temperature negative correlation
-          0.5, // Humidity correlation
-          0.2  // Light correlation
-        ]
-      };
-      
-      return {
-        success: true,
-        data: {
-          chart: correlationData,
-          text: "Phân tích tương quan giữa các yếu tố môi trường và hiệu quả tưới"
+
+        return {
+          success: true,
+          data: { chart: chartData, text: textResult }
+        };
+
+      } else if (type === 'correlation') {
+        // API_ENDPOINTS.AI.ANALYTICS_HISTORY sẽ trả về message nếu không có sensor data
+        const response = await api.get(API_ENDPOINTS.AI.ANALYTICS_HISTORY, {
+          params: { days } // days truyền vào từ options hoặc default
+        });
+        
+        let chartData = { labels: [], values: [] };
+        let textResult = `Phân tích tương quan cho giai đoạn ${response.data.period || days + ' ngày'}.`;
+        if (response.data.message) { // Thông báo từ backend nếu không có dữ liệu
+            textResult = response.data.message;
         }
+
+        // Hiện tại, API /history không trực tiếp trả về dữ liệu "tương quan".
+        // Nó trả về sensor_stats. Chúng ta cần tự tính toán tương quan hoặc hiển thị stats đó.
+        // Giả sử chúng ta chỉ hiển thị thông báo hoặc một biểu đồ đơn giản từ stats.
+        if (response.data && response.data.sensor_stats && !response.data.message) { // Chỉ tạo chart nếu có stats và không có message "không dữ liệu"
+            const stats = response.data.sensor_stats;
+            // Ví dụ: tạo biểu đồ hiển thị giá trị trung bình của các sensor
+            // Đây KHÔNG phải là tương quan, chỉ là ví dụ chart từ stats
+             chartData = {
+                labels: Object.keys(stats).map(key => CHART_CONFIG[key]?.title || key), // Lấy title từ CHART_CONFIG
+                values: Object.values(stats).map(statData => statData.avg || 0)
+            };
+            textResult += "\nBiểu đồ thể hiện giá trị trung bình của các cảm biến. " +
+                          "Để phân tích tương quan sâu hơn, cần mô hình AI phức tạp hơn.";
+            // Nếu backend trả message, textResult đã được set
+        } else if (response.data.message) {
+            // textResult đã chứa response.data.message rồi.
+        } else {
+            textResult = "Không có đủ dữ liệu thống kê để hiển thị hoặc phân tích tương quan.";
+        }
+
+        return {
+          success: true,
+          data: { chart: chartData, text: textResult }
+        };
+      }
+      // Mặc định nếu type không hợp lệ
+      return { success: false, error: "Loại phân tích không hợp lệ.", data: { chart: {labels: [], values:[]}, text:""}};
+
+    } catch (error) { // Lỗi thực sự từ api client (network, 500,...)
+      console.error(`Error fetching analytics chart data for ${type}:`, error);
+      return { 
+        success: false, 
+        error: error.message || ERROR_MESSAGES.SERVER_ERROR, 
+        data: { chart: {labels: [], values:[]}, text:"Đã xảy ra lỗi khi tải dữ liệu."} 
       };
     }
   }
 
-  // Get optimization recommendations (general system optimization, not schedule-specific)
-  async getGeneralOptimizationRecommendations(options = {}) {
-    // API: GET /api/analytics/optimize
-    // Response: { schedule: [{hour,duration,effectiveness,frequency}], explanation } -> This seems more for schedule optimization
-    // The original file has /greenhouse-ai/api/analytics/${type} -> implies a general 'optimization' type might exist
-    // Let's assume for now that this returns broader system optimization tips.
+  async getGeneralOptimizationRecommendations(options = {}) { /* ... (Như cũ, nếu dùng API khác) ... */ 
     const { forceRefresh = false } = options;
     const cacheKey = this.cacheConfig.optimizationRecs.key;
 
@@ -144,8 +151,7 @@ class AIAnalyticsService {
     try {
       console.log("Fetching AI general optimization recommendations:", API_ENDPOINTS.AI.ANALYTICS_OPTIMIZE);
       const response = await api.get(API_ENDPOINTS.AI.ANALYTICS_OPTIMIZE);
-      // Response is expected to be general system optimization, not just schedule as per doc.
-      // We will need to adjust if this API actually only returns schedule optimization.
+      // API này giờ cũng trả 200 OK, với explanation nếu không có schedule
       if (response.data) {
         this._setCache(cacheKey, response.data);
         return { success: true, data: response.data };
@@ -156,11 +162,7 @@ class AIAnalyticsService {
       return { success: false, error: error.message || ERROR_MESSAGES.SERVER_ERROR, data: this._getCache(cacheKey)};
     }
   }
-
-  // Get AI model performance
-  async getModelPerformance(options = {}) {
-    // API: GET /api/analytics/model-performance
-    // Response: { irrigation: {version, feature_importance}, chatbot: {...}, api_usage: {...} }
+  async getModelPerformance(options = {}) { /* ... (Như cũ) ... */
     const { forceRefresh = false } = options;
     const cacheKey = this.cacheConfig.modelPerformance.key;
 
@@ -171,6 +173,7 @@ class AIAnalyticsService {
       console.log("Fetching AI model performance:", API_ENDPOINTS.AI.ANALYTICS_MODEL_PERFORMANCE);
       const response = await api.get(API_ENDPOINTS.AI.ANALYTICS_MODEL_PERFORMANCE);
       if (response.data) {
+        // Nếu backend trả message (vd: No model performance data), nó sẽ nằm trong response.data
         this._setCache(cacheKey, response.data);
         return { success: true, data: response.data };
       }
@@ -181,6 +184,10 @@ class AIAnalyticsService {
     }
   }
 }
+
+// Thêm CHART_CONFIG vào file này nếu chưa có, hoặc import từ constants.js
+// Giả sử CHART_CONFIG đã được import từ constants.js
+import { CHART_CONFIG } from "./constants"; // Import CHART_CONFIG
 
 const aiAnalyticsService = new AIAnalyticsService();
 export default aiAnalyticsService;

@@ -1,0 +1,1 @@
+{"value": {"choices": [{"message": {"content": "```json\n{\n  \"intent\": \"query_soil_moisture\",\n  \"entities\": []\n}\n```\n"}}], "model": "gemini-2.0-flash", "usage": {"total_tokens": 93}}, "created_at": 1748793257.9558246, "expires_at": 1748879657.955825}

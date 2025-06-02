@@ -4,6 +4,7 @@
 import logging
 from fastapi import Request, HTTPException, status
 from typing import Dict, Any, Callable
+import functools
 
 from src.infrastructure.exceptions import BaseServiceException, service_exception_handler
 from src.infrastructure import get_service_factory as factory_getter
@@ -58,6 +59,7 @@ def handle_exceptions(func: Callable) -> Callable:
     Returns:
         Function đã được wrap
     """
+    @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)

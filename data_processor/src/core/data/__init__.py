@@ -1,4 +1,4 @@
-from .data_manager import DataManager
+from .data_manager import DataManager, OptimizedDataManager
 from .models import (
     SensorType,
     SensorStatus,
@@ -19,5 +19,7 @@ __all__ = [
     "TemperatureReading",
     "HumidityReading",
     "SoilMoistureReading",
-    "EnvironmentSnapshot"
+    "EnvironmentSnapshot",
+    "OptimizedDataManager"
+
 ]
