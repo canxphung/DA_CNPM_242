@@ -1,12 +1,12 @@
 // pages/Schedule/Schedule.jsx
-import React, { useState, useEffect } from "react"; // Added useEffect
+import React, { useState, useEffect } from "react";
 import Header from "../../components/Header";
 import Footer from "../../components/Footer";
 import Sidebar from "../../components/Sidebar";
 import { ScheduleProvider, useSchedule } from "../../contexts/ScheduleContext";
-import { FcEditImage, FcFullTrash } from "react-icons/fc"; // Changed FcAbout to FcEditImage
-import { CalendarDays, Clock, Timer, Repeat, Info, CheckSquare, Square } from 'lucide-react'; // Icons for form
-import NotificationToast from "../../components/NotificationToast"; // For notifications
+import { FcEditImage, FcFullTrash } from "react-icons/fc";
+import { CalendarDays, Clock, Timer, Repeat, Info, CheckSquare, Square, RefreshCw } from 'lucide-react'; // Added RefreshCw
+import NotificationToast from "../../components/NotificationToast";
 
 const daysOfWeekMap = [
   { value: "monday", label: "T2" }, { value: "tuesday", label: "T3" },
@@ -23,17 +23,16 @@ const ScheduleContent = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const initialFormData = {
-    title: "", // Corresponds to 'name' in API
-    days_of_week: [], // Array of strings e.g. ["monday", "friday"]
-    start_time: "", // "HH:MM" format
-    duration_minutes: "5", // Duration in minutes for easier UI
+    title: "",
+    days_of_week: [],
+    start_time: "",
+    duration_minutes: "5",
     active: true,
     description: ""
   };
   const [formData, setFormData] = useState(initialFormData);
   const [formErrors, setFormErrors] = useState({});
   const [notification, setNotification] = useState({ show: false, message: "", type: "info" });
-
 
   const showToast = (message, type = "info") => {
     setNotification({ show: true, message, type, onClose: () => setNotification(p => ({...p, show: false})) });
@@ -52,7 +51,7 @@ const ScheduleContent = () => {
     if (!formData.start_time) errors.start_time = "Thời gian bắt đầu không được để trống.";
     const durationNum = parseInt(formData.duration_minutes);
     if (isNaN(durationNum) || durationNum <= 0) errors.duration_minutes = "Thời lượng phải là số dương.";
-    else if (durationNum > 120) errors.duration_minutes = "Thời lượng không nên quá 2 tiếng (120 phút)."; // Example upper limit
+    else if (durationNum > 120) errors.duration_minutes = "Thời lượng không nên quá 2 tiếng (120 phút).";
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -79,18 +78,17 @@ const ScheduleContent = () => {
 
     const payload = {
       ...formData,
-      duration_seconds: parseInt(formData.duration_minutes) * 60, // Convert minutes to seconds for API
+      duration_seconds: parseInt(formData.duration_minutes) * 60,
     };
-    // console.log("Submitting payload:", payload);
 
-    setNotification({show: false, message: ""}); // Clear previous notification
+    setNotification({show: false, message: ""});
     const result = isEditing
       ? await updateSchedule(editingId, payload)
       : await addSchedule(payload);
 
     if (result.success) {
       showToast(result.message || (isEditing ? "Lịch trình đã được cập nhật!" : "Lịch trình đã được thêm!"), "success");
-      setFormData(initialFormData); // Reset form
+      setFormData(initialFormData);
       setIsEditing(false);
       setEditingId(null);
       setFormErrors({});
@@ -100,10 +98,8 @@ const ScheduleContent = () => {
   };
 
   const handleEditEvent = (eventToEdit) => {
-    // eventToEdit comes from the 'events' state, which has:
-    // _id, id, title, name, days, start_time, duration_seconds, active, description
     setIsEditing(true);
-    setEditingId(eventToEdit.id); // Use 'id' from API
+    setEditingId(eventToEdit.id);
     setFormData({
       title: eventToEdit.name,
       days_of_week: eventToEdit.days || [],
@@ -112,7 +108,7 @@ const ScheduleContent = () => {
       active: typeof eventToEdit.active === 'boolean' ? eventToEdit.active : true,
       description: eventToEdit.description || ""
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' }); // Scroll to form for editing
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleDeleteEvent = async (id) => {
@@ -130,12 +126,18 @@ const ScheduleContent = () => {
     setFormErrors({});
   };
 
-
-  if (loading && events.length === 0 && history.length === 0) { // More nuanced loading state
+  if (loading && events.length === 0 && history.length === 0) {
     return (
-      <div className="flex justify-center items-center min-h-[calc(100vh-150px)]"> {/* Adjust height if header/footer are fixed */}
-        <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500"></div>
-        <span className="ml-4 text-xl font-medium text-gray-600">Đang tải dữ liệu lịch trình...</span>
+      <div className="flex min-h-screen">
+        <Sidebar />
+        <div className="flex flex-col flex-1 ml-64">
+          <Header />
+          <div className="flex justify-center items-center flex-grow">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500"></div>
+            <span className="ml-4 text-xl font-medium text-gray-600">Đang tải dữ liệu lịch trình...</span>
+          </div>
+          <Footer />
+        </div>
       </div>
     );
   }
@@ -143,7 +145,7 @@ const ScheduleContent = () => {
   return (
     <div className="flex min-h-screen bg-emerald-50">
       <Sidebar />
-      <div className="flex flex-col w-full md:w-5/6 ml-0 md:ml-64"> {/* Adjust margin for fixed sidebar */}
+      <div className="flex flex-col flex-1 ml-64">
         <Header />
          {notification.show && notification.onClose && (
           <NotificationToast
@@ -216,7 +218,7 @@ const ScheduleContent = () => {
                 <div className="flex gap-3 pt-2">
                     <button type="submit"
                         className="flex-1 bg-blue-600 hover:bg-blue-700 transition text-white font-medium py-2.5 rounded-lg disabled:opacity-70"
-                        disabled={loading} // Disable during general loading state of context
+                        disabled={loading}
                     >
                         {isEditing ? "Cập nhật" : "Thêm mới"}
                     </button>
@@ -284,7 +286,7 @@ const ScheduleContent = () => {
                 {/* History */}
                 <div className="bg-white shadow-xl rounded-2xl p-6 overflow-x-auto">
                 <h2 className="text-xl sm:text-2xl font-semibold text-gray-700 mb-4 flex items-center">
-                    <Clock size={22} className="mr-2.5 text-green-500"/> Lịch sử Tưới (Placeholder)
+                    <Clock size={22} className="mr-2.5 text-green-500"/> Lịch sử Tưới
                 </h2>
                  {loading && history.length === 0 && <p className="text-gray-500 text-sm">Đang tải lịch sử...</p>}
                  {!loading && history.length === 0 && <p className="text-gray-500 text-sm italic">Chưa có dữ liệu lịch sử tưới.</p>}
@@ -298,7 +300,6 @@ const ScheduleContent = () => {
                             <th className="p-3 font-semibold text-gray-600">Thời gian</th>
                             <th className="p-3 font-semibold text-gray-600">Thời lượng</th>
                             <th className="p-3 font-semibold text-gray-600">Độ ẩm đất</th>
-                            {/* <th className="p-3 font-semibold text-gray-600">Nhiệt độ</th> */}
                             <th className="p-3 font-semibold text-gray-600">Trạng thái</th>
                         </tr>
                         </thead>
@@ -310,7 +311,6 @@ const ScheduleContent = () => {
                                 <td className="p-3 text-gray-600">{h.time}</td>
                                 <td className="p-3 text-gray-600">{h.duration_minutes ? `${h.duration_minutes} phút` : 'N/A'}</td>
                                 <td className="p-3 text-gray-600">{h.moisture !== "N/A" ? `${h.moisture}%` : 'N/A'}</td>
-                                {/* <td className="p-3 text-gray-600">{h.temperature !== "N/A" ? `${h.temperature}°C` : 'N/A'}</td> */}
                                 <td className="p-3">
                                     <span className={`px-2 py-0.5 text-xs rounded-full font-semibold capitalize ${
                                         h.status === 'completed' || h.status === 'applied' ? 'bg-green-100 text-green-700' :

@@ -154,6 +154,11 @@ async def get_optimization_recommendation(
 
     Analyzes historical data to recommend an optimal irrigation schedule.
     """
+    # if not sensor_data_records or not irrigation_event_records:
+    #     raise HTTPException(
+    #         status_code=404,
+    #         detail="Not enough sensor or irrigation data available for optimization for the specified period."
+    #     )
     end_time = datetime.now()
     start_time = end_time - timedelta(days=days)
 
@@ -171,9 +176,14 @@ async def get_optimization_recommendation(
         ).order_by(IrrigationEvent.start_time).all()
 
         if not sensor_data_records or not irrigation_event_records:
-            raise HTTPException(
-                status_code=404,
-                detail="Not enough sensor or irrigation data available for optimization for the specified period."
+            # Trả về 200 OK với thông báo không đủ dữ liệu
+            return OptimizationRecommendation(
+                schedule=[],
+                explanation=(
+                    "Không đủ dữ liệu cảm biến hoặc dữ liệu lịch sử tưới tiêu "
+                    "để thực hiện tối ưu hóa cho khoảng thời gian đã chọn. "
+                    "Vui lòng đảm bảo hệ thống đã hoạt động và thu thập đủ dữ liệu."
+                )
             )
 
         # Prepare data

@@ -33,11 +33,11 @@ class OpenAIClient:
         """
         self.use_cache = use_cache
         self.cache = APICacheManager() if use_cache else None
-        self.model = "gemini-pro"  # Thay cho gpt-3.5-turbo
+        self.model = "gemini-2.0-flash"  # Thay cho gpt-3.5-turbo
         
         # Khởi tạo model với cấu hình an toàn cho tiếng Việt
         self.gemini_model = genai.GenerativeModel(
-            'gemini-pro',
+            'gemini-2.0-flash',
             safety_settings={
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,

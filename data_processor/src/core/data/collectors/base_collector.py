@@ -57,6 +57,15 @@ class BaseCollector(Generic[T], ABC):
         self.key_prefix = self.config.get('redis.key_prefixes.sensor_data', 'sensor:')
         
         logger.info(f"Initialized {self.__class__.__name__} for sensor type: {sensor_type}")
+
+         # Cache settings được tối ưu
+        self.cache_ttl = 600  # 10 phút thay vì 1 giờ
+        self.stale_threshold = 300  # 5 phút - data cũ nhưng vẫn dùng được
+        self.max_stale_age = 900  # 15 phút - quá cũ, cần refresh
+        
+        # Rate limiting cho Adafruit calls
+        self._last_adafruit_call = {}
+        self._min_call_interval = 30  # Tối thiểu 30s giữa các calls
     
     def parse_timestamp(self, timestamp_str: Optional[str]) -> datetime:
         """
@@ -114,12 +123,86 @@ class BaseCollector(Generic[T], ABC):
         """
         pass
     
-    def collect_latest_data(self) -> Optional[SensorReading]:
+    def collect_latest_data(self, force_refresh: bool = False) -> Optional[SensorReading]:
         """
-        Thu thập dữ liệu mới nhất từ cảm biến.
+        Thu thập dữ liệu với Cache-First Strategy.
         
+        Args:
+            force_refresh: Bắt buộc lấy từ Adafruit (bỏ qua cache)
+            
         Returns:
-            SensorReading hoặc None nếu không thể thu thập dữ liệu
+            SensorReading hoặc None
+        """
+        # Bước 1: Kiểm tra cache trước (trừ khi force_refresh)
+        if not force_refresh:
+            cached_reading = self.get_latest_reading_from_cache()
+            
+            if cached_reading:
+                age = (datetime.now() - cached_reading.timestamp).total_seconds()
+                
+                # Nếu data còn fresh (< 5 phút), dùng luôn
+                if age < self.stale_threshold:
+                    logger.debug(f"Using fresh cached data for {self.sensor_type} (age: {age:.1f}s)")
+                    return cached_reading
+                    
+                # Nếu data stale nhưng chưa quá cũ (5-15 phút)
+                elif age < self.max_stale_age:
+                    # Kiểm tra rate limiting
+                    if self._should_refresh_from_adafruit():
+                        # Thử refresh async (không block)
+                        self._async_refresh_from_adafruit()
+                    
+                    # Vẫn trả về cached data (stale-while-revalidate)
+                    logger.debug(f"Using stale cached data for {self.sensor_type} (age: {age:.1f}s)")
+                    return cached_reading
+        
+        # Bước 2: Nếu không có cache hoặc quá cũ, lấy từ Adafruit
+        return self._fetch_from_adafruit()
+    
+    def collect_latest_data_optimized(self, force_refresh: bool = False) -> Optional[SensorReading]:
+        """
+        Thu thập dữ liệu với Cache-First Strategy.
+        
+        Args:
+            force_refresh: Bắt buộc lấy từ Adafruit (bỏ qua cache)
+            
+        Returns:
+            SensorReading hoặc None
+        """
+        # Check cache first
+        if not force_refresh:
+            cached_reading = self.get_latest_reading_from_cache()
+            
+            if cached_reading:
+                age = (datetime.now() - cached_reading.timestamp).total_seconds()
+                
+                # Fresh data (< 5 phút)
+                if age < 300:
+                    logger.debug(f"Cache hit for {self.sensor_type} (age: {age:.1f}s)")
+                    return cached_reading
+                
+                # Stale but usable (5-10 phút)
+                elif age < 600:
+                    logger.debug(f"Using stale data for {self.sensor_type} (age: {age:.1f}s)")
+                    # TODO: Trigger background refresh
+                    return cached_reading
+        
+        # Cache miss hoặc force refresh
+        return self._fetch_from_adafruit()
+    
+    def _should_refresh_from_adafruit(self) -> bool:
+        """Kiểm tra xem có nên gọi Adafruit không (rate limiting)."""
+        now = time.time()
+        last_call = self._last_adafruit_call.get(self.sensor_type, 0)
+        
+        if now - last_call < self._min_call_interval:
+            return False
+            
+        return True
+    
+    def _fetch_from_adafruit(self) -> Optional[SensorReading]:
+        """
+        Lấy dữ liệu từ Adafruit (helper method).
         """
         if not self.feed_key:
             logger.error(f"Cannot collect data: No feed key configured for {self.sensor_type}")
@@ -135,8 +218,8 @@ class BaseCollector(Generic[T], ABC):
             # Xử lý dữ liệu thô
             reading = self.process_raw_data(raw_data)
             
-            # Lưu vào cache
-            self._cache_reading(reading)
+            # Lưu vào cache với TTL tùy chỉnh
+            self._cache_reading(reading, ttl=600)  # 10 phút
             
             # Lưu vào storage
             self._store_reading(reading)
@@ -146,39 +229,126 @@ class BaseCollector(Generic[T], ABC):
         except Exception as e:
             logger.error(f"Error collecting data for {self.sensor_type}: {str(e)}")
             return None
-    
-    def collect_historical_data(self, limit: int = 10) -> List[SensorReading]:
+        
+    def _async_refresh_from_adafruit(self):
+        """Refresh data từ Adafruit trong background (non-blocking)."""
+        import threading
+        
+        def refresh_worker():
+            try:
+                self._fetch_from_adafruit()
+            except Exception as e:
+                logger.error(f"Background refresh failed for {self.sensor_type}: {e}")
+        
+        thread = threading.Thread(target=refresh_worker, daemon=True)
+        thread.start()
+
+    def get_latest_reading_from_cache(self) -> Optional[SensorReading]:
         """
-        Thu thập dữ liệu lịch sử từ cảm biến.
+        Lấy đọc cảm biến mới nhất từ cache.
+        
+        Returns:
+            SensorReading hoặc None nếu không có trong cache
+        """
+        try:
+            cache_key = f"{self.key_prefix}{self.sensor_type.value}:latest"
+            # MODIFIED: Retrieve JSON string and parse it
+            json_data = self.redis_client.get(cache_key) 
+            
+            if not json_data:
+                return None
+                
+            # Xác định lớp con của SensorReading dựa trên sensor_type
+            reading_class = self._get_reading_class()
+            
+            # FIX: json_data đã là string (không phải bytes) vì decode_responses=True trong RedisClient
+            # Nên parse trực tiếp, không cần decode
+            return reading_class.parse_raw(json_data)
+            
+        except Exception as e:
+            logger.error(f"Error getting latest reading from cache for {self.sensor_type}: {str(e)}")
+            return None
+    
+    def _cache_reading(self, reading: SensorReading, ttl: Optional[int] = None) -> bool:
+        """
+        Lưu đọc cảm biến vào cache.
         
         Args:
-            limit: Số lượng điểm dữ liệu tối đa
+            reading: Đọc cảm biến cần lưu
+            ttl: Time-to-live tùy chỉnh (giây)
             
         Returns:
-            List các SensorReading
+            bool: Thành công hay thất bại
         """
-        if not self.feed_key:
-            logger.error(f"Cannot collect data: No feed key configured for {self.sensor_type}")
-            return []
+        try:
+            # Tạo khóa Redis
+            cache_key = f"{self.key_prefix}{self.sensor_type.value}:latest"
+            
+            # Sử dụng TTL tùy chỉnh hoặc mặc định
+            expiration = ttl if ttl is not None else self.config.get('redis.default_expiration', 3600)
+            
+            # Store as JSON string
+            self.redis_client.set(cache_key, reading.json(), expiration) 
+            
+            # Lưu vào danh sách lịch sử gần đây
+            history_key = f"{self.key_prefix}{self.sensor_type.value}:history"
+            self.redis_client.redis.lpush(history_key, reading.json())
+            # Giữ chỉ 100 giá trị gần nhất
+            self.redis_client.redis.ltrim(history_key, 0, 99)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error caching reading for {self.sensor_type}: {str(e)}")
+            return False
+    
+    def _async_store_reading(self, reading: SensorReading):
+        """Store reading to Firebase async (non-blocking)."""
+        import threading
+        
+        def store_worker():
+            try:
+                self._store_reading(reading)
+            except Exception as e:
+                logger.error(f"Background store failed for {self.sensor_type}: {e}")
+        
+        thread = threading.Thread(target=store_worker, daemon=True)
+        thread.start()
+    
+    def collect_historical_data(self, limit: int = 10, use_cache: bool = True) -> List[SensorReading]:
+        """Collect historical data với cache support."""
+        # Thử lấy từ cache trước
+        if use_cache:
+            cached_history = self.get_recent_readings_from_cache(limit)
+            if len(cached_history) >= limit:
+                return cached_history
+                
+        # Nếu cache không đủ, lấy từ Adafruit
+        if not self._should_refresh_from_adafruit():
+            # Rate limited, trả về cache có sẵn
+            return self.get_recent_readings_from_cache(limit)
             
         try:
-            # Lấy dữ liệu lịch sử từ Adafruit
+            self._last_adafruit_call[self.sensor_type] = time.time()
+            
             raw_data_list = self.adafruit_client.get_data(self.feed_key, limit)
             if not raw_data_list:
-                logger.warning(f"No historical data available for feed: {self.feed_key}")
                 return []
                 
-            # Xử lý từng điểm dữ liệu
             readings = []
             for raw_data in raw_data_list:
                 reading = self.process_raw_data(raw_data)
                 readings.append(reading)
                 
+            # Cache tất cả readings
+            for reading in readings:
+                self._async_store_reading(reading)
+                
             return readings
             
         except Exception as e:
             logger.error(f"Error collecting historical data for {self.sensor_type}: {str(e)}")
-            return []
+            return self.get_recent_readings_from_cache(limit)
     
     def _cache_reading(self, reading: SensorReading) -> bool:
         """
@@ -235,31 +405,31 @@ class BaseCollector(Generic[T], ABC):
             logger.error(f"Error storing reading for {self.sensor_type}: {str(e)}")
             return False
     
-    def get_latest_reading_from_cache(self) -> Optional[SensorReading]:
-        """
-        Lấy đọc cảm biến mới nhất từ cache.
+    # def get_latest_reading_from_cache(self) -> Optional[SensorReading]:
+    #     """
+    #     Lấy đọc cảm biến mới nhất từ cache.
         
-        Returns:
-            SensorReading hoặc None nếu không có trong cache
-        """
-        try:
-            cache_key = f"{self.key_prefix}{self.sensor_type.value}:latest"
-            # MODIFIED: Retrieve JSON string and parse it
-            json_data = self.redis_client.get(cache_key) 
+    #     Returns:
+    #         SensorReading hoặc None nếu không có trong cache
+    #     """
+    #     try:
+    #         cache_key = f"{self.key_prefix}{self.sensor_type.value}:latest"
+    #         # MODIFIED: Retrieve JSON string and parse it
+    #         json_data = self.redis_client.get(cache_key) 
             
-            if not json_data:
-                return None
+    #         if not json_data:
+    #             return None
                 
-            # Xác định lớp con của SensorReading dựa trên sensor_type
-            reading_class = self._get_reading_class()
+    #         # Xác định lớp con của SensorReading dựa trên sensor_type
+    #         reading_class = self._get_reading_class()
             
-            # Tạo đối tượng từ dữ liệu JSON thô
-            # Pydantic's parse_raw method can deserialize a JSON string into a model instance
-            return reading_class.parse_raw(json_data)
+    #         # Tạo đối tượng từ dữ liệu JSON thô
+    #         # Pydantic's parse_raw method can deserialize a JSON string into a model instance
+    #         return reading_class.parse_raw(json_data)
             
-        except Exception as e:
-            logger.error(f"Error getting latest reading from cache for {self.sensor_type}: {str(e)}")
-            return None
+    #     except Exception as e:
+    #         logger.error(f"Error getting latest reading from cache for {self.sensor_type}: {str(e)}")
+    #         return None
     
     def get_recent_readings_from_cache(self, limit: int = 10) -> List[SensorReading]:
         """
@@ -284,14 +454,14 @@ class BaseCollector(Generic[T], ABC):
             
             # Tạo danh sách đối tượng từ dữ liệu
             readings = []
-            for data_json_bytes in data_list: # redis-py lrange returns list of bytes
-                # Decode bytes to string, then parse JSON string to dict, then create model
-                # Pydantic's parse_raw can handle bytes directly if they are UTF-8 encoded JSON
-                # Or, could do: data_json_str = data_json_bytes.decode('utf-8')
-                # reading = reading_class.parse_raw(data_json_str)
-                # The existing code uses json.loads and then **data, which is also fine.
-                # Let's assume data_json_bytes are indeed bytes from redis.
-                data_json_str = data_json_bytes.decode('utf-8') # Ensure it's a string
+            for data_json in data_list:
+                # FIX: Check if data_json is bytes or string
+                if isinstance(data_json, bytes):
+                    data_json_str = data_json.decode('utf-8')
+                else:
+                    data_json_str = data_json
+                
+                # Parse JSON string to dict
                 data = json.loads(data_json_str)
                 readings.append(reading_class(**data))
                 

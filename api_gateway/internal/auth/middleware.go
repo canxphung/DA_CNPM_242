@@ -75,6 +75,7 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			// === Core Operations Service (Python/FastAPI) endpoints ===
 			// Hỗ trợ cả hai dạng tiền tố "/api/v1/core-operations" và "/api/v1/core-operation"
 			"/api/v1/core-operations", "/api/v1/core-operation", // Root endpoint
+			"/api/v1/core-operations/", "/api/v1/core-operation/", // Root endpoint with trailing slash
 			"/api/v1/core-operations/health", "/api/v1/core-operation/health", // Health check
 			"/api/v1/core-operations/version", "/api/v1/core-operation/version", // Version info
 			"/api/v1/core-operations/docs", "/api/v1/core-operation/docs", // Swagger UI
@@ -82,7 +83,7 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			// System Config endpoints
 			"/api/v1/core-operations/system/config", "/api/v1/core-operation/system/config", // GET system config
 
-			// Sensor Data endpoints
+			// Sensor Data endpoints (NẾU MUỐN CÔNG KHAI - xóa nếu cần authentication)
 			"/api/v1/core-operations/sensors/", "/api/v1/core-operation/sensors/", // List available sensors
 			"/api/v1/core-operations/sensors/collect", "/api/v1/core-operation/sensors/collect", // Collect sensor data
 			"/api/v1/core-operations/sensors/snapshot", "/api/v1/core-operation/sensors/snapshot", // Environmental snapshot

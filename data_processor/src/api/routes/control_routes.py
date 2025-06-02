@@ -328,3 +328,8 @@ async def control_auto_irrigation(
     elif action.lower() == "trigger":
         result = manager.trigger_manual_decision()
         return result
+    
+# Thêm vào cuối file control_routes.py
+@router.get("/test-simple-route")
+async def test_simple_route_func():
+    return {"message": "This is a super simple route"}

@@ -1,6 +1,9 @@
 package middleware
 
 import (
+	"bufio"
+	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -24,17 +27,16 @@ func NewLoggingMiddleware(logger *zap.Logger) *LoggingMiddleware {
 func (m *LoggingMiddleware) LogRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-
-		// Generate request ID
 		requestID := uuid.New().String()
 
 		// Create a custom response writer to capture status code
-		responseWriter := &responseWriter{w, http.StatusOK}
-
-		// Add request ID to response headers
+		responseWriter := &responseWriter{
+			ResponseWriter: w,
+			status:         http.StatusOK,
+			written:        false,
+		}
 		responseWriter.Header().Set("X-Request-ID", requestID)
 
-		// Log request
 		m.logger.Info("Request received",
 			zap.String("request_id", requestID),
 			zap.String("method", r.Method),
@@ -46,26 +48,64 @@ func (m *LoggingMiddleware) LogRequest(next http.Handler) http.Handler {
 		// Process request
 		next.ServeHTTP(responseWriter, r)
 
-		// Calculate duration
 		duration := time.Since(start)
 
-		// Log response
+		// Log completion
 		m.logger.Info("Request completed",
 			zap.String("request_id", requestID),
 			zap.Int("status", responseWriter.status),
 			zap.Duration("duration", duration),
+			zap.Bool("response_written", responseWriter.written),
 		)
 	})
 }
 
-// Custom response writer to capture status code
+// Custom response writer to capture status code and ensure proper flushing
 type responseWriter struct {
 	http.ResponseWriter
-	status int
+	status  int
+	written bool
 }
 
-// WriteHeader captures the status code before delegating to the underlying ResponseWriter
 func (rw *responseWriter) WriteHeader(code int) {
-	rw.status = code
-	rw.ResponseWriter.WriteHeader(code)
+	if !rw.written {
+		rw.status = code
+		rw.written = true
+		rw.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (rw *responseWriter) Write(data []byte) (int, error) {
+	if !rw.written {
+		rw.written = true
+		// Ensure status code is written before body
+		if rw.status == 0 {
+			rw.status = http.StatusOK
+		}
+		rw.ResponseWriter.WriteHeader(rw.status)
+	}
+	return rw.ResponseWriter.Write(data)
+}
+
+// Flush implements the http.Flusher interface if the underlying ResponseWriter supports it
+func (rw *responseWriter) Flush() {
+	if flusher, ok := rw.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// CloseNotify implements the http.CloseNotifier interface if the underlying ResponseWriter supports it
+func (rw *responseWriter) CloseNotify() <-chan bool {
+	if notifier, ok := rw.ResponseWriter.(http.CloseNotifier); ok {
+		return notifier.CloseNotify()
+	}
+	return nil
+}
+
+// Hijack implements the http.Hijacker interface if the underlying ResponseWriter supports it
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, fmt.Errorf("ResponseWriter does not support Hijack")
 }

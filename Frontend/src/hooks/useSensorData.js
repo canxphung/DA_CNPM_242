@@ -281,12 +281,13 @@ export const useSensorData = (options = {}) => {
   const fetchData = useCallback(async (forceRefresh = false) => {
     try {
       setLoading(true);
-      setError(null);
+      // setError(null);
       
       const sensorData = await sensorService.fetchCurrentSensorData(forceRefresh);
       
       setData(sensorData);
       setLastUpdated(new Date());
+      setError(null);
       
       return sensorData;
     } catch (err) {

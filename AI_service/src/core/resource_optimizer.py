@@ -5,6 +5,7 @@ import logging
 import json
 from datetime import datetime, timedelta
 import pandas as pd
+from src.database import sensor_data
 import numpy as np
 from typing import Dict, List, Any, Optional
 
@@ -77,6 +78,16 @@ class ResourceOptimizer:
         Returns:
             Dict chứa thông tin tiết kiệm
         """
+        water_needs = {}
+
+        # Lấy thông số môi trường
+        soil_moisture = sensor_data.get('soil_moisture')
+        temperature = sensor_data.get('temperature', 25)
+        humidity = sensor_data.get('humidity', 60)
+
+        if soil_moisture is None:
+            logger.warning("Soil moisture is None, skipping water needs calculation.")
+            return {plant: 0.0 for plant in plant_types}
         # Tính tổng thời gian tưới
         current_duration = 0
         for item in current_schedule.get('zones', [current_schedule]):

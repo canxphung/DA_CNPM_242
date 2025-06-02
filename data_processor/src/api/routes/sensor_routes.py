@@ -52,44 +52,61 @@ async def collect_all_sensors():
             detail=f"Error collecting sensor data: {str(e)}"
         )
 
+# @router.get("/{sensor_type}")
+# async def get_sensor_data(
+#     sensor_type: str,
+#     collect: bool = Query(False, description="Thu thập dữ liệu mới"),
+#     limit: int = Query(1, description="Số lượng bản ghi", ge=1, le=100)
+# ):
+#     """
+#     Lấy dữ liệu từ sensor.
+#     MẶC ĐỊNH: Dùng cache (collect=False)
+#     """
+#     # ... validation code ...
+    
+#     collector = data_manager.collectors[sensor_enum]
+    
+#     if limit == 1:
+#         # Single reading - use cache by default
+#         if collect:
+#             # Force refresh only if explicitly requested
+#             reading = collector.collect_latest_data(force_refresh=True)
+#         else:
+#             # DEFAULT: Use cache
+#             reading = collector.get_latest_reading_from_cache()
+            
+#             # If no cache, collect
+#             if not reading:
+#                 reading = collector.collect_latest_data()
+        
+#         return reading.dict() if reading else {"error": "No data available"}
+#     else:
+#         # Multiple readings
+#         readings = collector.get_recent_readings_from_cache(limit=limit)
+        
+#         if not readings and collect:
+#             # Only fetch from Adafruit if explicitly requested
+#             readings = collector.collect_historical_data(limit=limit)
+        
+#         return {
+#             "sensor_type": sensor_type,
+#             "count": len(readings),
+#             "data": [r.dict() for r in readings]
+#         }
+
 @router.get("/snapshot")
 async def get_environment_snapshot(
-    collect: bool = Query(True, description="Thu thập dữ liệu mới nếu cần"),
+    collect: bool = Query(False, description="Force thu thập dữ liệu mới"),
     analyze: bool = Query(False, description="Phân tích dữ liệu")
 ):
     """
-    Lấy snapshot hiện tại của môi trường.
-    
-    Args:
-        collect: Nếu True, thu thập dữ liệu mới nếu cache quá cũ
-        analyze: Nếu True, phân tích dữ liệu và trả về kết quả phân tích
+    Lấy snapshot môi trường.
+    MẶC ĐỊNH: Dùng cache (collect=False)
     """
-    try:
-        snapshot = data_manager.get_environment_snapshot(collect_if_needed=collect)
-        
-        result = {
-            "timestamp": snapshot.timestamp.isoformat(),
-            "status": snapshot.get_overall_status(),
-            "sensors": {
-                "light": snapshot.light.dict() if snapshot.light else None,
-                "temperature": snapshot.temperature.dict() if snapshot.temperature else None,
-                "humidity": snapshot.humidity.dict() if snapshot.humidity else None,
-                "soil_moisture": snapshot.soil_moisture.dict() if snapshot.soil_moisture else None
-            }
-        }
-        
-        # Phân tích nếu được yêu cầu
-        if analyze:
-            analysis = environment_analyzer.analyze_snapshot(snapshot)
-            result["analysis"] = analysis
-            
-        return result
-    except Exception as e:
-        logger.error(f"Error getting environment snapshot: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error getting environment snapshot: {str(e)}"
-        )
+    snapshot = data_manager.get_environment_snapshot(
+        collect_if_needed=True,
+        force_collection=collect  # Chỉ force nếu được yêu cầu
+    )
 
 @router.get("/analyze")
 async def analyze_environment():
@@ -195,42 +212,33 @@ async def get_sensor_data(
         
         # Lấy collector tương ứng
         collector = data_manager.collectors[sensor_enum]
-        
-        # Thu thập dữ liệu mới nếu được yêu cầu
-        if collect:
-            reading = collector.collect_latest_data()
-            if limit == 1 and reading:
-                return reading.dict()
-                
-        # Lấy dữ liệu từ cache
+    
         if limit == 1:
-            reading = collector.get_latest_reading_from_cache()
-            if reading:
-                return reading.dict()
+            # Single reading - use cache by default
+            if collect:
+                # Force refresh only if explicitly requested
+                reading = collector.collect_latest_data(force_refresh=True)
             else:
-                # Nếu không có trong cache và không được yêu cầu thu thập, trả về lỗi
-                if not collect:
-                    return {
-                        "error": "No data available in cache",
-                        "sensor_type": sensor_type
-                    }
-                else:
-                    return {
-                        "error": "Failed to collect data",
-                        "sensor_type": sensor_type
-                    }
-        else:
-            # Lấy nhiều bản ghi
-            readings = collector.get_recent_readings_from_cache(limit=limit)
-            if not readings and collect:
-                # Nếu không có dữ liệu trong cache, thử lấy dữ liệu lịch sử từ Adafruit
-                readings = collector.collect_historical_data(limit=limit)
+                # DEFAULT: Use cache
+                reading = collector.get_latest_reading_from_cache()
                 
-            # Trả về danh sách dict
+                # If no cache, collect
+                if not reading:
+                    reading = collector.collect_latest_data()
+            
+            return reading.dict() if reading else {"error": "No data available"}
+        else:
+            # Multiple readings
+            readings = collector.get_recent_readings_from_cache(limit=limit)
+            
+            if not readings and collect:
+                # Only fetch from Adafruit if explicitly requested
+                readings = collector.collect_historical_data(limit=limit)
+            
             return {
                 "sensor_type": sensor_type,
                 "count": len(readings),
-                "data": [reading.dict() for reading in readings]
+                "data": [r.dict() for r in readings]
             }
             
     except HTTPException:

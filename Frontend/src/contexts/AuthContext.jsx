@@ -1,36 +1,70 @@
 // contexts/AuthContext.jsx
-import React, { createContext, useState, useEffect, useContext } from "react";
+import React, { createContext, useState, useEffect, useContext, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import api from "../utils/api"; // Sử dụng instance đã được cấu hình
-import { API_ENDPOINTS, STORAGE_KEYS, ERROR_MESSAGES, PERMISSIONS as APP_PERMISSIONS, HTTP_STATUS } from "../utils/constants"; // Đổi tên PERMISSIONS để tránh nhầm lẫn
+import api from "../utils/api";
+import { API_ENDPOINTS, STORAGE_KEYS, ERROR_MESSAGES, PERMISSIONS as APP_PERMISSIONS, HTTP_STATUS } from "../utils/constants";
 
 export const AuthContext = createContext();
 
-// PERMISSIONS constant - should be THE authoritative source
-// If your backend actually sends down different permission strings,
-// this APP_PERMISSIONS object should be mapped or generated from those.
-// For now, using what you defined.
 export const PERMISSIONS = APP_PERMISSIONS;
-
 
 export const DEFAULT_ROLES = {
   ADMIN: "admin",
   CUSTOMER: "customer",
+  USER: "user", // Added this
   MANAGER: "manager",
   OPERATOR: "operator",
+};
+
+// Default permissions for each role
+const DEFAULT_ROLE_PERMISSIONS = {
+  admin: [
+    PERMISSIONS.ADMIN_ACCESS,
+    PERMISSIONS.MANAGE_USERS,
+    PERMISSIONS.MANAGE_DEVICES,
+    PERMISSIONS.VIEW_DASHBOARD,
+    PERMISSIONS.VIEW_REPORTS,
+    PERMISSIONS.MANAGE_SCHEDULES,
+    PERMISSIONS.VIEW_SETTINGS,
+    PERMISSIONS.EDIT_PROFILE,
+    PERMISSIONS.MANAGE_ROLES,
+    PERMISSIONS.MANAGE_PERMISSIONS
+  ],
+  user: [
+    PERMISSIONS.VIEW_DASHBOARD,
+    PERMISSIONS.VIEW_REPORTS,
+    PERMISSIONS.MANAGE_SCHEDULES,
+    PERMISSIONS.VIEW_SETTINGS,
+    PERMISSIONS.EDIT_PROFILE
+  ],
+  customer: [
+    PERMISSIONS.VIEW_DASHBOARD,
+    PERMISSIONS.VIEW_REPORTS,
+    PERMISSIONS.EDIT_PROFILE
+  ]
 };
 
 export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [userPermissions, setUserPermissions] = useState([]);
-  const [userRoles, setUserRoles] = useState([]); // Assuming roles are strings like 'admin', 'customer' or objects like {id, name, permissions}
-  const [allRoles, setAllRoles] = useState([]); // For admin interface to assign roles
-  const [allPermissions, setAllPermissions] = useState([]); // For admin interface to assign permissions
+  const [userRoles, setUserRoles] = useState([]);
+  const [allRoles, setAllRoles] = useState([]);
+  const [allPermissions, setAllPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState("");
 
   const navigate = useNavigate();
+
+  // Memoize clearAuthDataAndRedirect to prevent re-creation
+  const clearAuthDataAndRedirect = useCallback(() => {
+    api.clearAuthData();
+    setCurrentUser(null);
+    setUserPermissions([]);
+    setUserRoles([]);
+    setUsers([]);
+    navigate("/login-as");
+  }, [navigate]);
 
   useEffect(() => {
     const handleAuthFailure = (event) => {
@@ -41,7 +75,7 @@ export const AuthProvider = ({ children }) => {
 
     window.addEventListener('authFailure', handleAuthFailure);
     return () => window.removeEventListener('authFailure', handleAuthFailure);
-  }, [navigate]); // Added navigate to dependency array as clearAuthDataAndRedirect uses it.
+  }, [clearAuthDataAndRedirect]);
 
   useEffect(() => {
     const token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
@@ -51,16 +85,6 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     }
   }, []);
-
-  const clearAuthDataAndRedirect = () => {
-    api.clearAuthData();
-    setCurrentUser(null);
-    setUserPermissions([]);
-    setUserRoles([]);
-    setUsers([]); // Clear users list as well
-    // No loading change here as it might cause flashes; let navigate handle UI change.
-    navigate("/login-as");
-  };
 
   const clearAuthDataOnly = () => {
     api.clearAuthData();
@@ -72,42 +96,56 @@ export const AuthProvider = ({ children }) => {
   const loadUserCompleteData = async (baseUserData) => {
     if (!baseUserData || !baseUserData.id) {
       console.error("Cannot load complete data without base user ID.");
-      clearAuthDataAndRedirect(); // Critical data missing
+      clearAuthDataAndRedirect();
       return;
     }
+    
     try {
-      // Use API_ENDPOINTS.USERS.ME if your backend provides full user details (including roles/permissions) here
-      // Or, if /auth/me already provided sufficient role/permission info, use that.
-      // The current structure implies /auth/me gives basic user, then /users/:id gives details.
       const userDetailResponse = await api.get(API_ENDPOINTS.USERS.BY_ID(baseUserData.id));
       console.log("userDetailResponse", userDetailResponse);
-      const completeUserData = userDetailResponse.data; // Assuming response.data IS the user object
+      const completeUserData = userDetailResponse.data;
       console.log("completeUserData", completeUserData);
-      if (completeUserData && (userDetailResponse.data.id || userDetailResponse.data._id)) {
+      
+      if (completeUserData && (completeUserData.id || completeUserData._id)) {
+        // Extract permissions and roles
+        let permissions = completeUserData.customPermissions || completeUserData.permissions || [];
+        let roles = completeUserData.roles || [];
+        
+        // Handle the single 'role' field if 'roles' array is empty
+        if ((!roles || roles.length === 0) && completeUserData.role) {
+          roles = [completeUserData.role];
+        }
+        
+        // If user has no custom permissions, assign default permissions based on role
+        if (permissions.length === 0 && completeUserData.role) {
+          permissions = DEFAULT_ROLE_PERMISSIONS[completeUserData.role] || [];
+          console.log(`Assigning default permissions for role ${completeUserData.role}:`, permissions);
+        }
+        
+        // Convert to string arrays
+        const permissionStrings = permissions.map(p => (typeof p === 'string' ? p : p.name));
+        const roleStrings = roles.map(r => (typeof r === 'string' ? r : r.name));
+        
         setCurrentUser(completeUserData);
-        
-        // Permissions can be an array of strings or objects {id, name, resource, action}
-        // Roles can be an array of strings or objects {id, name, permissions: [...]}
-        const permissions = completeUserData.customPermissions || []; // Or completeUserData.permissions from role
-        const roles = completeUserData.roles || []; // Expecting this to be array of role objects/strings
-        
-        setUserPermissions(permissions.map(p => (typeof p === 'string' ? p : p.name)));
-        setUserRoles(roles.map(r => (typeof r === 'string' ? r : r.name)));
+        setUserPermissions(permissionStrings);
+        setUserRoles(roleStrings);
 
+        // Store in localStorage
         localStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(completeUserData));
-        localStorage.setItem(STORAGE_KEYS.PERMISSIONS, JSON.stringify(permissions.map(p => (typeof p === 'string' ? p : p.name))));
-        // Storing roles might also be useful if needed for UI directly
-        localStorage.setItem(STORAGE_KEYS.USER_ROLES, JSON.stringify(roles.map(r => (typeof r === 'string' ? r : r.name))));
-
-
+        localStorage.setItem(STORAGE_KEYS.PERMISSIONS, JSON.stringify(permissionStrings));
+        localStorage.setItem(STORAGE_KEYS.USER_ROLES, JSON.stringify(roleStrings));
+        
+        console.log("User data loaded successfully:", {
+          userId: completeUserData.id || completeUserData._id,
+          email: completeUserData.email,
+          roles: roleStrings,
+          permissions: permissionStrings
+        });
       } else {
-          throw new Error("Invalid complete user data from server");
+        throw new Error("Invalid complete user data from server");
       }
-
     } catch (error) {
       console.error("Error loading complete user data:", error.message, error.originalError);
-      // Fallback to basic data if detailed loading fails, but this might leave user in inconsistent state
-      // Better to log out if essential data like permissions can't be loaded.
       setAuthError(error.message || "Lỗi tải thông tin người dùng chi tiết.");
       clearAuthDataAndRedirect();
     }
@@ -118,43 +156,40 @@ export const AuthProvider = ({ children }) => {
     setAuthError("");
     try {
       const response = await api.get(API_ENDPOINTS.AUTH.ME);
-      const userDataFromAuthMe = response.data; // Expects { id, email, role, possibly basic permissions }
+      const userDataFromAuthMe = response.data;
 
       if (userDataFromAuthMe && userDataFromAuthMe.id) {
-        // Now, fetch more complete user details if needed, or directly use userDataFromAuthMe
-        // Your loadUserCompleteData implies /auth/me gives base, then /users/:id gives full.
-        await loadUserCompleteData(userDataFromAuthMe); 
+        await loadUserCompleteData(userDataFromAuthMe);
       } else {
         throw new Error("Invalid user data from /auth/me");
       }
     } catch (error) {
       console.error("Error checking logged in user:", error.message, error.originalError);
       setAuthError(error.message || ERROR_MESSAGES.UNAUTHORIZED);
-      clearAuthDataAndRedirect(); // Redirect to login if 'me' fails
+      clearAuthDataAndRedirect();
     } finally {
       setLoading(false);
     }
   };
 
-
-  const login = async (email, password, type = "customer") => { // 'type' param might be deprecated if not used by backend
+  const login = async (email, password, type = "customer") => {
     setLoading(true);
     setAuthError("");
     try {
       const response = await api.post(API_ENDPOINTS.AUTH.LOGIN, { email, password });
-      // API Doc expects: { user: { id, email, role,... }, accessToken, refreshToken }
       const { user, tokens } = response.data;
       console.log("Login response:", response.data);
-      if (tokens.accessToken && user && user.id) {
+      
+      if (tokens?.accessToken && user?.id) {
         api.setTokens(tokens.accessToken, tokens.refreshToken);
-        await loadUserCompleteData(user); // Load full user details after login
+        await loadUserCompleteData(user);
 
-        // Navigation logic (already present, seems fine)
-        const userRolesArray = Array.isArray(user.roles) ? user.roles : (user.role ? [user.role] : []);
-        if (userRolesArray.some(role => (typeof role === 'string' ? role : role.name) === DEFAULT_ROLES.ADMIN)) {
-            navigate("/admin");
+        // Navigation based on role
+        const userRole = user.role || (user.roles && user.roles[0]);
+        if (userRole === DEFAULT_ROLES.ADMIN) {
+          navigate("/admin");
         } else {
-            navigate("/");
+          navigate("/");
         }
         return { success: true, message: "Đăng nhập thành công!" };
       } else {
@@ -164,7 +199,7 @@ export const AuthProvider = ({ children }) => {
       console.error("Login failed:", error.message, error.originalError);
       const errorMessage = error.message || ERROR_MESSAGES.SERVER_ERROR;
       setAuthError(errorMessage);
-      clearAuthDataOnly(); // Clear tokens but don't redirect immediately, let UI show error
+      clearAuthDataOnly();
       return { success: false, message: errorMessage };
     } finally {
       setLoading(false);
@@ -175,26 +210,19 @@ export const AuthProvider = ({ children }) => {
     setLoading(true);
     setAuthError("");
     try {
-      // User Service API POST /auth/register expects: email, password, firstName, lastName
       const { firstName, lastName, email, password } = userData;
       const payload = { email, password, firstName, lastName };
 
-      // Other fields like phone, address, birth, username would be updated via PUT /users/me or PUT /users/:id AFTER registration & login
-      // For now, this context function only handles the registration call.
-
       const response = await api.post(API_ENDPOINTS.AUTH.REGISTER, payload);
-      
-      // API Doc: Output { message, user (created), accessToken, refreshToken }
       const { accessToken, refreshToken, user } = response.data;
 
-      if (accessToken && user && user.id) { // If backend auto-logs in
+      if (accessToken && user?.id) {
         api.setTokens(accessToken, refreshToken);
         await loadUserCompleteData(user);
-        // Potentially navigate here, or let SignUp page handle success (e.g., show success message then redirect to login)
+        navigate("/");
       }
-      // Even if not auto-login, registration might be successful
+      
       return { success: true, message: response.data.message || "Đăng ký thành công!" };
-
     } catch (error) {
       console.error("Registration failed:", error.message, error.originalError);
       const errorMessage = error.message || ERROR_MESSAGES.SERVER_ERROR;
@@ -205,72 +233,57 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = async (allDevices = false) => { // 'allDevices' seems to correspond to /auth/logout-all
+  const logout = async (allDevices = false) => {
     setLoading(true);
     try {
       const refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
       if (refreshToken) {
         const endpoint = allDevices ? API_ENDPOINTS.AUTH.LOGOUT_ALL : API_ENDPOINTS.AUTH.LOGOUT;
-        // LOGOUT_ALL POST expects no body but uses the token. LOGOUT POST expects { refreshToken }.
-        // This needs to be consistent. Assuming LOGOUT takes refreshToken in body, LOGOUT_ALL takes nothing.
         if (allDevices) {
-             await api.post(endpoint);
+          await api.post(endpoint);
         } else {
-             await api.post(endpoint, { refreshToken });
+          await api.post(endpoint, { refreshToken });
         }
       }
     } catch (error) {
       console.error("Logout API call failed:", error.message, error.originalError);
-      // Still proceed with local logout
     } finally {
       clearAuthDataAndRedirect();
-      setLoading(false); // Ensure loading is set to false
+      setLoading(false);
     }
   };
 
-  const hasPermission = (permissionName) => {
+  // Memoize permission checking functions
+  const hasPermission = useCallback((permissionName) => {
     if (loading || !Array.isArray(userPermissions)) return false;
-    // Assuming userPermissions is an array of permission strings like "user:read", "device:control"
-    // And userRoles is an array of role objects, each potentially having a 'permissions' array.
     
-    const hasDirectPermission = userPermissions.includes(permissionName);
-    if (hasDirectPermission) return true;
-
-    // Check permissions from roles
-    // This part assumes userRoles is an array of role *objects* like: [{ name: 'admin', permissions: ['user:manage', ...] }]
-    // If userRoles is just an array of role *names*, this check needs adjustment or more data fetching for role details.
-    // Given loadUserCompleteData fetches /users/:id, 'roles' field in 'completeUserData' should be rich.
-    if (Array.isArray(userRoles)) {
-        for (const role of userRoles) {
-            if (typeof role === 'object' && role !== null && Array.isArray(role.permissions)) {
-                if (role.permissions.some(p => (typeof p === 'string' ? p === permissionName : p.name === permissionName))) {
-                    return true;
-                }
-            }
-            // If role is a string, we can't check its permissions here without fetching role details
-        }
+    // Check direct permissions
+    if (userPermissions.includes(permissionName)) return true;
+    
+    // Check role-based permissions
+    for (const role of userRoles) {
+      const rolePermissions = DEFAULT_ROLE_PERMISSIONS[role];
+      if (rolePermissions && rolePermissions.includes(permissionName)) {
+        return true;
+      }
     }
+    
     return false;
-  };
+  }, [loading, userPermissions, userRoles]);
   
-  const hasRole = (roleNameToCheck) => {
+  const hasRole = useCallback((roleNameToCheck) => {
     if (loading || !Array.isArray(userRoles)) return false;
-    return userRoles.some(role => (typeof role === 'string' ? role === roleNameToCheck : role.name === roleNameToCheck));
-  };
+    return userRoles.includes(roleNameToCheck);
+  }, [loading, userRoles]);
 
-  const isAdmin = () => {
+  const isAdmin = useCallback(() => {
     return hasRole(DEFAULT_ROLES.ADMIN) || hasPermission(PERMISSIONS.ADMIN_ACCESS);
-  };
+  }, [hasRole, hasPermission]);
 
+  // Other functions remain the same...
   const fetchUsers = async (filters = {}) => {
-    setLoading(true); // Or a specific loading state for user fetching
+    setLoading(true);
     try {
-      // Permission check should ideally be here or in Admin.jsx before calling
-      // if (!hasPermission(PERMISSIONS.READ_USER)) { // Using specific READ_USER permission
-      //   setAuthError("Không có quyền xem danh sách người dùng");
-      //   return { success: false, message: "Không có quyền xem danh sách người dùng", data: [] };
-      // }
-      
       const params = new URLSearchParams();
       Object.entries(filters).forEach(([key, value]) => {
         if (value !== undefined && value !== '' && value !== null) {
@@ -278,14 +291,11 @@ export const AuthProvider = ({ children }) => {
         }
       });
 
-      // API_ENDPOINTS.USERS.BASE should be just "/users" (without prefix, api.userService will add it)
       const response = await api.get(`${API_ENDPOINTS.USERS.BASE}${params.toString() ? `?${params.toString()}` : ''}`);
-      // API DOC User Service GET /api/v1/users: returns { users: [], total, page, limit }
-      const usersData = response.data.users || response.data || []; // Handle if response structure is just an array
+      const usersData = response.data.users || response.data || [];
       const totalUsers = response.data.total || usersData.length;
       
-      setUsers(usersData); // Update local state for components like Admin.jsx
-      
+      setUsers(usersData);
       return { success: true, data: usersData, total: totalUsers };
     } catch (error) {
       console.error("Error fetching users:", error.message, error.originalError);
@@ -295,17 +305,13 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     }
   };
-  
+
   const createUser = async (userData) => {
-    // Admin.jsx CreateUserModal passes: { email, password, firstName, lastName, role }
-    // API POST /api/v1/users expects: email, password, firstName, lastName, role (optional, default 'customer')
     setLoading(true);
     try {
-      // if (!hasPermission(PERMISSIONS.CREATE_USER)) { ... }
       const response = await api.post(API_ENDPOINTS.USERS.BASE, userData);
-      // API DOC User Service: returns created user object
       const newUser = response.data;
-      setUsers(prevUsers => [...prevUsers, newUser]); // Update local cache
+      setUsers(prevUsers => [...prevUsers, newUser]);
       return { success: true, message: "Tạo người dùng thành công", user: newUser };
     } catch (error) {
       console.error("Error creating user:", error.message, error.originalError);
@@ -316,32 +322,23 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     }
   };
-  
+
   const updateUserProfile = async (userId, updatedData) => {
-    // User.jsx calls this with currentUser.id and payload: { firstName, lastName, email, phone, address }
-    // Also for profileImage update: { profileImage: newImageUrl }
-    // API PUT /api/v1/users/:id can update these fields.
-    // Ensure that 'email' update is handled carefully by backend (e.g., re-verification)
-    // Permission check: user:update for admins, or profile:update if it's the user's own profile.
-    
     setLoading(true);
     try {
-        const canUpdate = hasPermission(PERMISSIONS.UPDATE_USER) || 
-                          (currentUser && currentUser.id === userId && hasPermission(PERMISSIONS.EDIT_PROFILE));
+      const canUpdate = hasPermission(PERMISSIONS.UPDATE_USER) || 
+                        (currentUser && currentUser.id === userId && hasPermission(PERMISSIONS.EDIT_PROFILE));
       
-        if (!canUpdate) {
-            setAuthError("Không có quyền cập nhật thông tin người dùng này.");
-            return { success: false, message: "Không có quyền cập nhật thông tin người dùng này." };
-        }
+      if (!canUpdate) {
+        setAuthError("Không có quyền cập nhật thông tin người dùng này.");
+        return { success: false, message: "Không có quyền cập nhật thông tin người dùng này." };
+      }
 
       const response = await api.put(API_ENDPOINTS.USERS.BY_ID(userId), updatedData);
-      // API Doc User Service: returns updated user object
       const updatedUserFromServer = response.data;
       
       if (currentUser && currentUser.id === userId) {
-        // If updating own profile, we need to re-process roles/permissions
-        // loadUserCompleteData does this and sets currentUser
-        await loadUserCompleteData(updatedUserFromServer); 
+        await loadUserCompleteData(updatedUserFromServer);
       }
       
       setUsers(prevUsers => 
@@ -359,13 +356,10 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const changePassword = async (currentPassword, newPassword) => { // userId is implicit (current user)
-    // API POST /api/v1/users/change-password expects: { currentPassword, newPassword }
+  const changePassword = async (currentPassword, newPassword) => {
     setLoading(true);
     try {
-      // No userId needed as API works on the authenticated user
       const response = await api.post(API_ENDPOINTS.USERS.CHANGE_PASSWORD, { currentPassword, newPassword });
-      // API Doc User Service: returns success message
       return { success: true, message: response.data.message || "Thay đổi mật khẩu thành công" };
     } catch (error) {
       console.error("Error changing password:", error.message, error.originalError);
@@ -380,9 +374,7 @@ export const AuthProvider = ({ children }) => {
   const deleteUser = async (userId) => {
     setLoading(true);
     try {
-      // if (!hasPermission(PERMISSIONS.DELETE_USER)) { ... }
       await api.delete(API_ENDPOINTS.USERS.BY_ID(userId));
-      // API Doc User Service: should return 204 No Content or a success message
       setUsers(prevUsers => prevUsers.filter(user => user.id !== userId));
       return { success: true, message: "Xóa người dùng thành công" };
     } catch (error) {
@@ -395,16 +387,14 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Load system roles and permissions (for admin panels)
   const loadSystemRolesAndPermissions = async () => {
     setLoading(true);
     try {
       const [rolesRes, permissionsRes] = await Promise.all([
-        api.get(API_ENDPOINTS.ROLES.BASE), // GET /api/v1/roles
-        api.get(API_ENDPOINTS.PERMISSIONS.BASE) // GET /api/v1/permissions
+        api.get(API_ENDPOINTS.ROLES.BASE),
+        api.get(API_ENDPOINTS.PERMISSIONS.BASE)
       ]);
-      // API Doc: /roles returns array of roles, /permissions returns array of permissions
-      setAllRoles(rolesRes.data || []); // Assuming response.data is the array
+      setAllRoles(rolesRes.data || []);
       setAllPermissions(permissionsRes.data || []);
       return { success: true };
     } catch (error) {
@@ -416,33 +406,33 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-
-  const value = {
+  // Memoize the context value to prevent unnecessary re-renders
+  const value = useMemo(() => ({
     currentUser,
     userPermissions,
-    userRoles, // This now stores role names or objects
+    userRoles,
     loading,
     authError,
     login,
     register,
     logout,
-    checkLoggedInUser, // Renamed to avoid conflict if imported directly
+    checkLoggedInUser,
     hasPermission,
     hasRole,
     isAdmin,
-    users, // List of all users for admin
+    users,
     fetchUsers,
     createUser,
-    updateUserProfile, // Used by User.jsx
-    changePassword,    // Used by User.jsx
+    updateUserProfile,
+    changePassword,
     deleteUser,
     allRoles,
     allPermissions,
     loadSystemRolesAndPermissions,
     setAuthError,
-    PERMISSIONS, // Export PERMISSIONS constant from here
-    DEFAULT_ROLES, // Export DEFAULT_ROLES from here too
-  };
+    PERMISSIONS,
+    DEFAULT_ROLES,
+  }), [currentUser, userPermissions, userRoles, loading, authError, users, allRoles, allPermissions, hasPermission, hasRole, isAdmin]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
@@ -455,28 +445,26 @@ export const useAuth = () => {
   return context;
 };
 
-// PermissionGate, RoleGate, AdminGate components remain the same
-// ... (Copy PermissionGate, RoleGate, AdminGate from your original file)
 export const PermissionGate = ({ children, permission, fallback = null }) => {
-  const { hasPermission, loading: authLoadingContext } = useAuth(); // Renamed loading to avoid conflict
+  const { hasPermission, loading } = useAuth();
   
-  if (authLoadingContext) return null; // Or a loading spinner
+  if (loading) return null; // Don't render children during loading
   if (!permission || hasPermission(permission)) return children;
   return fallback;
 };
 
 export const RoleGate = ({ children, role, fallback = null }) => {
-  const { hasRole, loading: authLoadingContext } = useAuth();
+  const { hasRole, loading } = useAuth();
   
-  if (authLoadingContext) return null;
+  if (loading) return null;
   if (!role || hasRole(role)) return children;
   return fallback;
 };
 
 export const AdminGate = ({ children, fallback = null }) => {
-  const { isAdmin, loading: authLoadingContext } = useAuth();
+  const { isAdmin, loading } = useAuth();
   
-  if (authLoadingContext) return null;
+  if (loading) return null;
   if (isAdmin()) return children;
   return fallback;
 };

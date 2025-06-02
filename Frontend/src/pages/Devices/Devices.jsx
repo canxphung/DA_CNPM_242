@@ -1,150 +1,165 @@
 // src/pages/Devices/Devices.jsx
-import React, { useState, useCallback } // Removed useEffect as useSensorData handles initial load
-from "react";
+import React, { useState, useCallback } from "react";
 import Header from "../../components/Header";
 import Footer from "../../components/Footer";
 import Sidebar from "../../components/Sidebar";
-import DevicesCard from "./DevicesCard"; // Updated card
-import SensorChart from "../../components/SensorChart"; // Still uses Chart.js
+import DevicesCard from "./DevicesCard";
+import SensorChart from "../../components/SensorChart";
 import Loading from "../../components/Loading";
 import { useSensorData } from "../../hooks/useSensorData";
 import { RefreshCw, Activity, AlertTriangle, TrendingUp, Wifi, WifiOff, Info } from "lucide-react";
 
 const Devices = () => {
   const [selectedChart, setSelectedChart] = useState("temperature");
-  // const [chartMode, setChartMode] = useState("trend"); // Not currently used with SensorChart
   const [showPerformancePanel, setShowPerformancePanel] = useState(false);
 
   const {
-    data, // { temperature: {value, unit, status, timestamp, feedId, analysis}, moisture: {...}, ... }
-    chartData, // { temperature: {labels, values}, moisture: {...}, ... }
+    data,
+    sensors, // Use sensors instead of data to avoid null issues
+    chartData,
     loading,
-    error, // General error string for the hook
-    analysis: overallAnalysisSummary, // Object: { temperature: {analysis_for_temp}, moisture: {...} } from snapshot
-    recommendations: overallIrrigationRecommendations, // Array of recommendations from snapshot (usually irrigation)
-    overallStatus, // String: 'normal', 'warning', 'critical' from snapshot
-    refreshData, // This is now clearCacheAndRefresh
-    analyzeSensor, // Function to analyze a specific sensor
-    lastUpdate,
+    error,
+    analysis: overallAnalysisSummary,
+    recommendations: overallIrrigationRecommendations,
+    overallStatus,
+    refreshData,
+    analyzeSensor,
+    lastUpdate: lastUpdated,
     connectionStatus,
     getPerformanceMetrics,
-    // clearCache, // Can use refreshData or specific clearCache from hook
     isAutoRefreshEnabled,
     currentRefreshInterval
   } = useSensorData({
-    refreshInterval: 30000, // Faster refresh for active monitoring
+    refreshInterval: 30000,
     enableAutoRefresh: true,
-    historyHours: 12 // Maybe shorter history for device page charts
+    historyHours: 12
   });
 
   const createEnhancedCards = useCallback(() => {
-    const { temperature, moisture, light, soil } = data; // 'data' from useSensorData already contains 'analysis' field per sensor
+    // Create default sensor structure if sensors is empty
+    const defaultSensor = {
+      value: null,
+      unit: "",
+      status: "unknown",
+      timestamp: null,
+      feedId: "N/A",
+      analysis: null
+    };
+
+    const temperature = sensors.temperature || { ...defaultSensor, unit: "°C", sensor_type: "temperature" };
+    const moisture = sensors.moisture || { ...defaultSensor, unit: "%", sensor_type: "moisture" };
+    const light = sensors.light || { ...defaultSensor, unit: "Lux", sensor_type: "light" };
+    const soil = sensors.soil || { ...defaultSensor, unit: "%", sensor_type: "soil" };
     
-    // Helper to get specific recommendations for a sensor type (simplified)
     const getSensorSpecificRecommendations = (sensorType) => {
-        if(!overallIrrigationRecommendations) return [];
-        // If overallIrrigationRecommendations is an array of actions_items from snapshot
-        if (Array.isArray(overallIrrigationRecommendations)) {
-            // Filter if action items relate to a sensor (e.g. based on details string)
-            // This is a basic filter, real-world would need better tagging in recs.
-            return overallIrrigationRecommendations.filter(rec => 
-                rec.details?.toLowerCase().includes(sensorType) ||
-                (sensorType === "soil" && (rec.action?.includes("water") || rec.details?.toLowerCase().includes("soil")))
-            );
+      if (!overallIrrigationRecommendations) return [];
+      
+      if (Array.isArray(overallIrrigationRecommendations)) {
+        return overallIrrigationRecommendations.filter(rec => 
+          rec.details?.toLowerCase().includes(sensorType) ||
+          (sensorType === "soil" && (rec.action?.includes("water") || rec.details?.toLowerCase().includes("soil")))
+        );
+      }
+      
+      if (typeof overallIrrigationRecommendations === 'object' && overallIrrigationRecommendations !== null) {
+        if (sensorType === "soil" && overallIrrigationRecommendations.needs_water) {
+          return [{
+            action: overallIrrigationRecommendations.reason,
+            priority: overallIrrigationRecommendations.urgency,
+            details: `Recommended water amount: ${overallIrrigationRecommendations.recommended_water_amount}`
+          }];
         }
-        // If it's a single recommendation object for irrigation:
-        if (typeof overallIrrigationRecommendations === 'object' && overallIrrigationRecommendations !== null) {
-            if (sensorType === "soil" && overallIrrigationRecommendations.needs_water) {
-                 return [{ 
-                    action: overallIrrigationRecommendations.reason, 
-                    priority: overallIrrigationRecommendations.urgency,
-                    details: `Recommended water amount: ${overallIrrigationRecommendations.recommended_water_amount}`
-                }];
-            }
-        }
-        return [];
+      }
+      return [];
     };
     
-    // Calculate percentage for display. Can use analysis if available.
     const calculateDisplayPercent = (sensorValue, sensorAnalysis, type) => {
-        if (sensorAnalysis && sensorAnalysis.status) {
-            switch (sensorAnalysis.status) { // Assuming status from sensor.analysis
-                case "optimal": case "normal": return 85 + Math.random() * 15;
-                case "warning": case "warning_low": case "warning_high": return 40 + Math.random() * 30;
-                case "critical": case "critical_low": case "critical_high": return Math.random() * 30;
-                default: return 50;
-            }
+      if (sensorValue === null || sensorValue === undefined) return 0;
+      
+      if (sensorAnalysis && sensorAnalysis.status) {
+        switch (sensorAnalysis.status) {
+          case "optimal":
+          case "normal":
+            return 85 + Math.random() * 15;
+          case "warning":
+          case "warning_low":
+          case "warning_high":
+            return 40 + Math.random() * 30;
+          case "critical":
+          case "critical_low":
+          case "critical_high":
+            return Math.random() * 30;
+          default:
+            return 50;
         }
-        // Fallback simple calculation (less important if status is reliable)
-        if (type === "temperature") return Math.min(Math.max(((parseFloat(sensorValue) - 0) / (50 - 0)) * 100, 0), 100);
-        if (type === "moisture" || type === "soil") return Math.min(Math.max(parseFloat(sensorValue), 0), 100);
-        if (type === "light") return Math.min(Math.max(((parseFloat(sensorValue) - 0) / (2000 - 0)) * 100, 0), 100); // Max Lux for % e.g. 2000
-        return 50;
+      }
+      
+      const numericValue = parseFloat(sensorValue);
+      if (isNaN(numericValue)) return 0;
+      
+      if (type === "temperature") return Math.min(Math.max(((numericValue - 0) / (50 - 0)) * 100, 0), 100);
+      if (type === "moisture" || type === "soil") return Math.min(Math.max(numericValue, 0), 100);
+      if (type === "light") return Math.min(Math.max(((numericValue - 0) / (2000 - 0)) * 100, 0), 100);
+      return 50;
     };
 
     const sensorDetailsMap = {
-        temperature: "Nhiệt độ môi trường, quan trọng cho sự phát triển của cây.",
-        moisture: "Độ ẩm không khí, ảnh hưởng đến hô hấp và bệnh tật của cây.",
-        light: "Cường độ ánh sáng, cần thiết cho quá trình quang hợp.",
-        soil: "Độ ẩm trong đất, yếu tố chính quyết định nhu cầu tưới."
+      temperature: "Nhiệt độ môi trường, quan trọng cho sự phát triển của cây.",
+      moisture: "Độ ẩm không khí, ảnh hưởng đến hô hấp và bệnh tật của cây.",
+      light: "Cường độ ánh sáng, cần thiết cho quá trình quang hợp.",
+      soil: "Độ ẩm trong đất, yếu tố chính quyết định nhu cầu tưới."
     };
 
-    return [temperature, moisture, light, soil].map(sensorData => {
-        if (!sensorData || typeof sensorData.value === 'undefined') { // Handle case where a sensor data might be missing
-            let type = "unknown";
-            if(sensorData === temperature) type="temperature";
-            if(sensorData === moisture) type="moisture";
-            if(sensorData === light) type="light";
-            if(sensorData === soil) type="soil";
-            return {
-                type: type, title: type.charAt(0).toUpperCase() + type.slice(1), value: "N/A", sub: "", percent: 0,
-                detail: "Không có dữ liệu", feedId: "N/A", date: "N/A", time: "N/A",
-                status: "error", analysis: {description: "Mất kết nối"}, metadata: null, recommendations: []
-            };
-        }
-        
-        const sensorTypeKey = sensorData.sensor_type === "humidity" ? "moisture" : sensorData.sensor_type === "soil_moisture" ? "soil" : sensorData.sensor_type;
-
-        return {
-            type: sensorTypeKey, // e.g., "temperature", "moisture", "light", "soil"
-            title: sensorTypeKey.charAt(0).toUpperCase() + sensorTypeKey.slice(1).replace('_', ' '),
-            value: `${parseFloat(sensorData.value).toFixed(1)}${sensorData.unit || ''}`,
-            sub: sensorData.unit || "",
-            percent: calculateDisplayPercent(sensorData.value, sensorData.analysis, sensorTypeKey),
-            detail: sensorDetailsMap[sensorTypeKey] || "Dữ liệu cảm biến quan trọng.",
-            feedId: sensorData.feedId || "N/A",
-            date: sensorData.timestamp ? new Date(sensorData.timestamp).toLocaleDateString("vi-VN") : "N/A",
-            time: sensorData.timestamp ? new Date(sensorData.timestamp).toLocaleTimeString("vi-VN") : "N/A",
-            status: sensorData.status || "unknown", // Status from sensor.status
-            analysis: sensorData.analysis, // Specific analysis object for this sensor
-            metadata: sensorData.metadata || null, // If available from /collect
-            recommendations: getSensorSpecificRecommendations(sensorTypeKey),
-            // trend and lastValues are removed as per previous decision
-        };
+    return [
+      { sensor: temperature, type: "temperature" },
+      { sensor: moisture, type: "moisture" },
+      { sensor: light, type: "light" },
+      { sensor: soil, type: "soil" }
+    ].map(({ sensor, type }) => {
+      const hasValue = sensor.value !== null && sensor.value !== undefined;
+      const displayValue = hasValue ? parseFloat(sensor.value).toFixed(1) : "N/A";
+      
+      return {
+        type: type,
+        title: type.charAt(0).toUpperCase() + type.slice(1).replace('_', ' '),
+        value: hasValue ? `${displayValue}${sensor.unit || ''}` : "N/A",
+        sub: sensor.unit || "",
+        percent: calculateDisplayPercent(sensor.value, sensor.analysis, type),
+        detail: sensorDetailsMap[type] || "Dữ liệu cảm biến quan trọng.",
+        feedId: sensor.feedId || "N/A",
+        date: sensor.timestamp ? new Date(sensor.timestamp).toLocaleDateString("vi-VN") : "N/A",
+        time: sensor.timestamp ? new Date(sensor.timestamp).toLocaleTimeString("vi-VN") : "N/A",
+        status: sensor.status || "unknown",
+        analysis: sensor.analysis || { description: hasValue ? "Đang phân tích..." : "Không có dữ liệu" },
+        metadata: sensor.metadata || null,
+        recommendations: getSensorSpecificRecommendations(type),
+      };
     });
+  }, [sensors, overallIrrigationRecommendations]);
 
-  }, [data, overallIrrigationRecommendations]); // Dependencies: data object and overall recommendations
-
-
-  const chartConfig = { /* ... (keep existing from your file, make sure keys match sensorTypes) ... */ 
+  const chartConfig = {
     temperature: { title: "Nhiệt độ", lineColor: "rgb(239, 68, 68)", yAxisLabel: "°C" },
     moisture: { title: "Độ ẩm không khí", lineColor: "rgb(59, 130, 246)", yAxisLabel: "%" },
     light: { title: "Cường độ ánh sáng", lineColor: "rgb(234, 179, 8)", yAxisLabel: "Lux" },
     soil: { title: "Độ ẩm đất", lineColor: "rgb(34, 197, 94)", yAxisLabel: "%" }
   };
 
-  const getConnectionStyling = () => { /* ... (keep existing) ... */ 
-     switch (connectionStatus) {
-      case 'connected': return { color: 'text-green-600', bgColor: 'bg-green-50', icon: Wifi, message: 'Kết nối ổn định' };
-      case 'connecting': return { color: 'text-yellow-600', bgColor: 'bg-yellow-50', icon: Wifi, message: 'Đang kết nối...' };
-      case 'error': return { color: 'text-red-600', bgColor: 'bg-red-50', icon: WifiOff, message: `Lỗi kết nối${error ? `: ${error.substring(0,30)}...` : ''}`};
-      default: return { color: 'text-gray-600', bgColor: 'bg-gray-50', icon: Wifi, message: 'Không rõ' };
+  const getConnectionStyling = () => {
+    switch (connectionStatus) {
+      case 'connected':
+        return { color: 'text-green-600', bgColor: 'bg-green-50', icon: Wifi, message: 'Kết nối ổn định' };
+      case 'connecting':
+        return { color: 'text-yellow-600', bgColor: 'bg-yellow-50', icon: Wifi, message: 'Đang kết nối...' };
+      case 'error':
+        return { color: 'text-red-600', bgColor: 'bg-red-50', icon: WifiOff, message: `Lỗi kết nối${error ? `: ${error.substring(0, 30)}...` : ''}` };
+      default:
+        return { color: 'text-gray-600', bgColor: 'bg-gray-50', icon: Wifi, message: 'Không rõ' };
     }
   };
   
   const handleAnalyzeSpecificSensor = async (sensorTypeToAnalyze) => {
     console.log(`Requesting analysis for: ${sensorTypeToAnalyze}`);
-    const result = await analyzeSensor(sensorTypeToAnalyze); // analyzeSensor is from useSensorData
+    const result = await analyzeSensor(sensorTypeToAnalyze);
     if (result.success) {
       alert(`Phân tích cho ${sensorTypeToAnalyze}:\nTrạng thái: ${result.analysis?.status}\nMô tả: ${result.analysis?.description || 'N/A'}`);
     } else {
@@ -155,44 +170,53 @@ const Devices = () => {
   const cards = createEnhancedCards();
   const connectionStylingResult = getConnectionStyling();
 
-  if (loading && !data.temperature.feedId) { // Initial loading: if no feedId even for temperature
+  // Show loading only on initial load
+  if (loading && !data && !sensors.temperature) {
     return <Loading />;
   }
 
-  // If general error from hook AND no sensor data at all is present
-  if (error && !data.temperature.value && connectionStatus === 'error') {
+  // Error state with no data at all
+  if (error && connectionStatus === 'error' && (!sensors || Object.keys(sensors).length === 0)) {
     return (
-        <div className="flex min-h-screen"><Sidebar />
-        <div className="flex flex-col w-5/6"><Header />
-        <main className="flex-grow container mx-auto py-8 px-4 flex flex-col justify-center items-center">
+      <div className="flex min-h-screen">
+        <Sidebar />
+        <div className="flex flex-col flex-1 ml-64">
+          <Header />
+          <main className="flex-grow container mx-auto py-8 px-4 flex flex-col justify-center items-center">
             <div className="bg-red-50 border border-red-200 p-8 rounded-lg shadow-md text-center max-w-md">
-            <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-            <h2 className="text-xl font-semibold text-red-700 mb-2">Lỗi tải dữ liệu sensor</h2>
-            <p className="text-red-600 mb-4">{error}</p>
-            <button onClick={() => refreshData()}
-                className="w-full px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors flex items-center justify-center">
-                <RefreshCw className="w-4 h-4 mr-2" />Thử lại
-            </button>
+              <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+              <h2 className="text-xl font-semibold text-red-700 mb-2">Lỗi tải dữ liệu sensor</h2>
+              <p className="text-red-600 mb-4">{error}</p>
+              <button 
+                onClick={() => refreshData()}
+                className="w-full px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors flex items-center justify-center"
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Thử lại
+              </button>
             </div>
-        </main><Footer /></div></div>
+          </main>
+          <Footer />
+        </div>
+      </div>
     );
   }
 
   return (
     <div className="flex min-h-screen">
       <Sidebar />
-      <div className="flex flex-col w-5/6">
+      <div className="flex flex-col flex-1 ml-64">
         <Header />
         
         <main className="flex-grow container mx-auto py-6 px-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-2">
             <div>
-              <h1 className="text-2xl font-bold text-gray-800"> {/* Simpler color */}
+              <h1 className="text-2xl font-bold text-gray-800">
                 Bảng điều khiển thiết bị
               </h1>
               <p className="text-sm text-gray-500 mt-1">
                 Giám sát và phân tích dữ liệu sensor thời gian thực.
-                {lastUpdate && ` Cập nhật lần cuối: ${lastUpdate.toLocaleTimeString('vi-VN')}`}
+                {lastUpdated && ` Cập nhật lần cuối: ${lastUpdated.toLocaleTimeString('vi-VN')}`}
               </p>
             </div>
             
@@ -200,40 +224,41 @@ const Devices = () => {
               <div title={connectionStylingResult.message} className={`flex items-center px-3 py-1.5 rounded-lg ${connectionStylingResult.bgColor} text-xs`}>
                 <connectionStylingResult.icon className={`w-3.5 h-3.5 mr-1.5 ${connectionStylingResult.color}`} />
                 <span className={`font-medium ${connectionStylingResult.color}`}>
-                  {connectionStylingResult.message.split(':')[0]} {/* Show only first part of message */}
+                  {connectionStylingResult.message.split(':')[0]}
                 </span>
               </div>
-              <button onClick={() => refreshData()} disabled={loading}
+              <button 
+                onClick={() => refreshData()} 
+                disabled={loading}
                 className="flex items-center px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 text-sm"
-                title="Làm mới dữ liệu">
+                title="Làm mới dữ liệu"
+              >
                 <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
-                {loading && !error ? 'Đang tải...' : 'Làm mới'}
+                {loading ? 'Đang tải...' : 'Làm mới'}
               </button>
-              {/* <button onClick={() => setShowPerformancePanel(!showPerformancePanel)}
-                className="flex items-center px-3 py-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors text-sm"
-                title="Thông tin hiệu suất">
-                <Activity className="w-3.5 h-3.5 mr-1.5" />
-                Hiệu suất
-              </button> */}
             </div>
           </div>
 
-          {error && (!loading || (loading && overallStatus === 'error')) && ( // Show persistent error if any, even during loading next try
+          {error && !loading && (
             <div className="mb-4 p-3 bg-red-50 border-l-4 border-red-400 text-red-700 text-sm rounded-md">
-                <div className="flex items-center">
-                    <AlertTriangle size={18} className="mr-2"/>
-                    <p><strong className="font-semibold">Lỗi:</strong> {error}</p>
-                </div>
+              <div className="flex items-center">
+                <AlertTriangle size={18} className="mr-2" />
+                <p><strong className="font-semibold">Lỗi:</strong> {error}</p>
+              </div>
             </div>
           )}
 
-          {overallStatus && overallStatus !== 'normal' && overallStatus !== 'error' && (
-             <div className={`mb-6 p-3 rounded-lg border-l-4 text-sm ${
+          {overallStatus && overallStatus !== 'normal' && overallStatus !== 'error' && overallStatus !== 'unknown' && (
+            <div className={`mb-6 p-3 rounded-lg border-l-4 text-sm ${
               overallStatus === 'warning' ? 'bg-yellow-50 border-yellow-400 text-yellow-700' : 
-              overallStatus === 'critical' ? 'bg-red-50 border-red-400 text-red-700' : 'bg-gray-50 border-gray-400 text-gray-700'
+              overallStatus === 'critical' ? 'bg-red-50 border-red-400 text-red-700' : 
+              'bg-gray-50 border-gray-400 text-gray-700'
             }`}>
               <div className="flex items-center">
-                {overallStatus === 'warning' || overallStatus === 'critical' ? <AlertTriangle size={18} className="mr-2"/> : <Info size={18} className="mr-2"/> }
+                {overallStatus === 'warning' || overallStatus === 'critical' ? 
+                  <AlertTriangle size={18} className="mr-2" /> : 
+                  <Info size={18} className="mr-2" />
+                }
                 <p>
                   <strong className="font-semibold">Trạng thái hệ thống:</strong> {overallStatus.toUpperCase()}. 
                   {overallAnalysisSummary?.general_recommendation || " Kiểm tra các cảm biến."}
@@ -242,11 +267,9 @@ const Devices = () => {
             </div>
           )}
 
-          {/* Performance panel content to be added if needed */}
-
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6 mb-8">
             {cards.map((cardProps, index) => (
-              <div key={cardProps.type || index} className="h-64"> {/* Set fixed height for cards */}
+              <div key={cardProps.type || index} className="h-64">
                 <DevicesCard {...cardProps} />
               </div>
             ))}
@@ -286,25 +309,26 @@ const Devices = () => {
               ))}
             </div>
 
-            {chartData[selectedChart] && chartData[selectedChart].labels.length > 0 ? (
-                <SensorChart // This uses Chart.js as per SensorChart.jsx
-                  title="" // Title already shown above
-                  chartData={chartData[selectedChart]} // { labels: [...], values: [...] }
-                  yAxisLabel={chartConfig[selectedChart]?.yAxisLabel || "Giá trị"}
-                  lineColor={chartConfig[selectedChart]?.lineColor || "rgb(75, 192, 192)"}
-                />
-              ) : (
-                <div className="h-72 md:h-80 flex items-center justify-center text-gray-500">
-                  <div className="text-center">
-                    <Activity className="w-10 h-10 mx-auto mb-3 text-gray-400" />
-                    <p>
-                      {loading ? "Đang tải dữ liệu biểu đồ..." : "Không có dữ liệu cho biểu đồ."}
-                    </p>
-                    {/* Show error specific to chartData if it failed independently */}
-                    {chartData[selectedChart]?.error && <p className="text-xs text-red-500 mt-1">{chartData[selectedChart].error}</p>}
-                  </div>
+            {chartData && chartData[selectedChart] && chartData[selectedChart].labels && chartData[selectedChart].labels.length > 0 ? (
+              <SensorChart
+                title=""
+                chartData={chartData[selectedChart]}
+                yAxisLabel={chartConfig[selectedChart]?.yAxisLabel || "Giá trị"}
+                lineColor={chartConfig[selectedChart]?.lineColor || "rgb(75, 192, 192)"}
+              />
+            ) : (
+              <div className="h-72 md:h-80 flex items-center justify-center text-gray-500">
+                <div className="text-center">
+                  <Activity className="w-10 h-10 mx-auto mb-3 text-gray-400" />
+                  <p>
+                    {loading ? "Đang tải dữ liệu biểu đồ..." : "Không có dữ liệu cho biểu đồ."}
+                  </p>
+                  {chartData && chartData[selectedChart]?.error && (
+                    <p className="text-xs text-red-500 mt-1">{chartData[selectedChart].error}</p>
+                  )}
                 </div>
-              )}
+              </div>
+            )}
           </div>
         </main>
         <Footer />

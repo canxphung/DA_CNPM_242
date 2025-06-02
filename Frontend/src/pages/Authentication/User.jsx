@@ -120,7 +120,7 @@ const User = () => {
   const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [notification, setNotification] = useState({ show: false, message: "", type: "success" });
-
+  console.log('Full currentUser:', currentUser);
   useEffect(() => {
     if (!authLoading && !currentUser) {
       navigate("/login-as");

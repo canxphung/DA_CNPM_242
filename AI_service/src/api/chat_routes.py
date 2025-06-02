@@ -35,7 +35,7 @@ async def process_message(
     if not message.text:
         raise HTTPException(status_code=400, detail="Message text cannot be empty")
     
-    result = service.process_user_message(
+    result = await service.process_user_message(
         message_text=message.text,
         user_id=message.user_id
     )

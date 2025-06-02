@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -16,17 +17,21 @@ type ServiceProxy struct {
 	target    *url.URL
 	proxy     *httputil.ReverseProxy
 	logger    *zap.Logger
-	serviceID string // ID của dịch vụ, ví dụ: "user-auth", "core-operation", "greenhouse-ai"
+	serviceID string
 }
 
 // NewServiceProxy creates a new service proxy
 func NewServiceProxy(targetURL string, serviceID string, logger *zap.Logger) (*ServiceProxy, error) {
-	// Xác thực serviceID
+	logger.Info("Creating service proxy",
+		zap.String("target_url", targetURL),
+		zap.String("service_id", serviceID))
+
+	// Validate serviceID
 	validServiceIDs := map[string]bool{
-		"user-auth":       true, // User & Auth Service (Node.js)
-		"auth":            true, // Backward compatibility
+		"user-auth":       true,
+		"auth":            true,
 		"core-operations": true,
-		"core-operation":  true, // Hỗ trợ cả hai phiên bản của serviceID
+		"core-operation":  true,
 		"greenhouse-ai":   true,
 	}
 
@@ -36,226 +41,204 @@ func NewServiceProxy(targetURL string, serviceID string, logger *zap.Logger) (*S
 
 	target, err := url.Parse(targetURL)
 	if err != nil {
-		return nil, err
+		logger.Error("Failed to parse target URL",
+			zap.String("target_url", targetURL),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to parse target URL: %w", err)
 	}
 
+	logger.Info("Target URL parsed successfully",
+		zap.String("scheme", target.Scheme),
+		zap.String("host", target.Host),
+		zap.String("path", target.Path))
+
 	proxy := httputil.NewSingleHostReverseProxy(target)
+
+	// Set buffer pool for better memory management
+	proxy.BufferPool = newBufferPool()
 
 	// Customize the director to modify the request before sending it to the backend
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
-		// Gọi director gốc để thiết lập các headers cơ bản (Host, User-Agent, v.v.)
+		logger.Debug("Proxy Director: Processing request",
+			zap.String("service", serviceID),
+			zap.String("original_path", req.URL.Path),
+			zap.String("method", req.Method))
+
+		logger.Debug("PROXY_DIRECTOR_ENTRY", zap.String("service", serviceID), zap.String("original_client_path", req.URL.Path))
+
+		// Call original director
 		originalDirector(req)
 
-		// Cập nhật host và scheme của request để khớp với target backend
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
-
-		// IMPORTANT: Add a special header to tell backend services that CORS is being handled by the gateway
 		req.Header.Set("X-Backend-CORS-Handled", "true")
 
-		// Lấy đường dẫn gốc từ request đến gateway
 		originalPath := req.URL.Path
-		proxiedPath := originalPath // Biến tạm để sửa đổi đường dẫn
+		proxiedPath := originalPath
+		logger.Debug("PROXY_DIRECTOR_AFTER_ORIGINAL",
+			zap.String("service", serviceID),
+			zap.String("path_after_originalDirector", req.URL.Path),
+			zap.String("target_scheme", target.Scheme),
+			zap.String("target_host", target.Host),
+		)
 
-		// Bước 1: Loại bỏ tiền tố API chung của gateway (/api/v1)
-		// Gateway nhận request dạng: /api/v1/{serviceID}/{backendPath}
+		// Remove /api/v1
 		const gatewayAPIPrefix = "/api/v1"
 		proxiedPath = strings.TrimPrefix(proxiedPath, gatewayAPIPrefix)
 
-		// Bước 2: Xử lý đường dẫn dựa trên serviceID
+		// Normalize path to avoid multiple leading slashes
+		proxiedPath = "/" + strings.TrimLeft(proxiedPath, "/")
+
+		// Process path based on serviceID
 		switch serviceID {
 		case "user-auth":
-			// Đối với User & Auth Service (Node.js/Express):
-			// Gateway nhận: /api/v1/user-auth/auth/login
-			// Cần cắt bỏ /user-auth và giữ lại /auth/login
-			// Sau đó thêm lại tiền tố /api/v1 cho Node.js service
-
 			servicePrefix := "/" + serviceID
 			proxiedPath = strings.TrimPrefix(proxiedPath, servicePrefix)
-
-			// Special handling for user paths
 			if strings.HasPrefix(proxiedPath, "/users/") {
-				// Keep /users/ path for Node.js service
 				req.URL.Path = "/api/v1" + proxiedPath
-				logger.Debug("User path special handling",
-					zap.String("original_path", originalPath),
-					zap.String("modified_path", req.URL.Path))
 			} else {
-				// Node.js Express app được cấu hình với tiền tố API
-				// Vì vậy, chúng ta cần đưa tiền tố `/api/v1` trở lại trước khi forward.
 				req.URL.Path = gatewayAPIPrefix + proxiedPath
-
-				// Xử lý trường hợp đặc biệt cho root của Node.js service
-				if proxiedPath == "/auth" || proxiedPath == "/auth/" {
-					req.URL.Path = gatewayAPIPrefix + proxiedPath
-				}
 			}
 
 		case "auth":
-			// Backward compatibility: Đối với User & Auth Service (Node.js/Express)
-			// Gateway nhận: /api/v1/auth/login (old format)
-			// Node.js Express app được cấu hình với tiền tố API
 			req.URL.Path = gatewayAPIPrefix + proxiedPath
 
-			// Xử lý trường hợp đặc biệt cho root của Node.js service
-			if proxiedPath == "/auth" || proxiedPath == "/auth/" {
-				req.URL.Path = gatewayAPIPrefix + "/" // Trở thành /api/v1/
-			}
-
 		case "core-operation", "core-operations":
-			// Core Operations Service expects paths like /api/control/..., /api/system/..., /api/sensors/...
 			servicePrefix := "/" + serviceID
 			proxiedPath = strings.TrimPrefix(proxiedPath, servicePrefix)
-
-			// Core Ops expects /api prefix on its paths
-			if !strings.HasPrefix(proxiedPath, "/api") && !strings.HasPrefix(proxiedPath, "/health") && !strings.HasPrefix(proxiedPath, "/version") {
+			if !strings.HasPrefix(proxiedPath, "/api/") &&
+				!strings.HasPrefix(proxiedPath, "/health") &&
+				!strings.HasPrefix(proxiedPath, "/version") &&
+				!strings.HasPrefix(proxiedPath, "/docs") {
 				req.URL.Path = "/api" + proxiedPath
 			} else {
 				req.URL.Path = proxiedPath
 			}
 
 		case "greenhouse-ai":
-			// AI Service expects paths like /api/chat/..., /api/sensors/..., /api/analytics/...
 			servicePrefix := "/" + serviceID
 			proxiedPath = strings.TrimPrefix(proxiedPath, servicePrefix)
-
-			// AI Service expects /api prefix on most paths
-			if !strings.HasPrefix(proxiedPath, "/api") && !strings.HasPrefix(proxiedPath, "/health") && !strings.HasPrefix(proxiedPath, "/docs") {
+			if !strings.HasPrefix(proxiedPath, "/api") &&
+				!strings.HasPrefix(proxiedPath, "/health") &&
+				!strings.HasPrefix(proxiedPath, "/docs") {
 				req.URL.Path = "/api" + proxiedPath
 			} else {
 				req.URL.Path = proxiedPath
 			}
 
 		default:
-			// Xử lý mặc định cho các serviceID không xác định khác
+			logger.Warn("Unknown service ID, using default path handling",
+				zap.String("service_id", serviceID))
 			servicePrefix := "/" + serviceID
 			proxiedPath = strings.TrimPrefix(proxiedPath, servicePrefix)
 			req.URL.Path = proxiedPath
 		}
 
-		// Đảm bảo đường dẫn luôn bắt đầu bằng '/' để tránh các lỗi routing
-		if !strings.HasPrefix(req.URL.Path, "/") {
-			req.URL.Path = "/" + req.URL.Path
-		}
+		// Ensure path starts with a single slash
+		req.URL.Path = "/" + strings.TrimLeft(req.URL.Path, "/")
 
-		// Log request để debug
-		logger.Debug("Proxying request",
+		logger.Debug("Proxy Director: Request prepared",
+			zap.String("final_path", req.URL.Path),
+			zap.String("backend_url", fmt.Sprintf("%s://%s%s", req.URL.Scheme, req.URL.Host, req.URL.Path)))
+
+		logger.Info("PROXY_DIRECTOR_FINAL_TARGET", // INFO để dễ thấy
 			zap.String("service", serviceID),
-			zap.String("original_path", originalPath),
-			zap.String("proxied_path_to_backend", req.URL.Path),
-			zap.String("target_url", target.String()),
 			zap.String("method", req.Method),
-			zap.String("origin", req.Header.Get("Origin")),
+			zap.String("final_backend_scheme", req.URL.Scheme),
+			zap.String("final_backend_host", req.URL.Host),
+			zap.String("final_backend_path", req.URL.Path), // Đây là path sẽ gửi đi
+			zap.String("full_backend_url", req.URL.String()),
 		)
-
-		// Thêm X-Forwarded headers nếu chưa có để backend có thông tin về request gốc
-		if _, ok := req.Header["X-Forwarded-For"]; !ok {
-			req.Header.Set("X-Forwarded-For", req.RemoteAddr)
-		}
-		if _, ok := req.Header["X-Forwarded-Proto"]; !ok {
-			req.Header.Set("X-Forwarded-Proto", target.Scheme)
-		}
-
-		// Thêm X-Gateway-Service header để dịch vụ backend biết request đến từ gateway nào
+		// Add headers
+		req.Header.Set("X-Forwarded-For", req.RemoteAddr)
+		req.Header.Set("X-Forwarded-Proto", "http")
 		req.Header.Set("X-Gateway-Service", serviceID)
-
-		// Chuyển tiếp đường dẫn gốc dưới dạng header trong trường hợp backend cần để logging/debug
 		req.Header.Set("X-Original-Path", originalPath)
 	}
 
-	// Custom error handler để ghi log chi tiết hơn khi có lỗi proxy
+	// Custom error handler with better error handling
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		logger.Error("Proxy error",
+		logger.Error("Proxy error occurred",
 			zap.String("service", serviceID),
-			zap.String("url", r.URL.String()),
-			zap.Error(err),
-			zap.String("client_ip", r.RemoteAddr),
-			zap.String("method", r.Method),
-			zap.String("origin", r.Header.Get("Origin")),
-		)
+			zap.String("request_url", r.URL.String()),
+			zap.String("target_host", target.Host),
+			zap.Error(err))
 
-		// Set CORS headers even on error responses
-		if origin := r.Header.Get("Origin"); origin != "" {
+		logger.Error("PROXY_ERROR_HANDLER", // ERROR để dễ thấy
+			zap.String("service", serviceID),
+			zap.String("request_url_at_error", r.URL.String()),
+			zap.String("target_host_at_error", target.Host),
+			zap.Error(err), // Lỗi chi tiết
+		)
+		// Determine appropriate status code
+		statusCode := http.StatusBadGateway
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			logger.Error("Backend timeout", zap.String("service", serviceID))
+			statusCode = http.StatusGatewayTimeout
+		}
+
+		// Set CORS headers for error responses
+		if origin := r.Header.Get("Origin"); isValidOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
-			w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, Origin, X-Request-ID")
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway) // 502 Bad Gateway
+		w.WriteHeader(statusCode)
 
-		// Tùy chỉnh thông báo lỗi dựa trên dịch vụ
-		var errorMessage string
-		switch serviceID {
-		case "user-auth", "auth":
-			errorMessage = "Dịch vụ xác thực tạm thời không khả dụng"
-		case "core-operation", "core-operations":
-			errorMessage = "Dịch vụ vận hành cốt lõi tạm thời không khả dụng"
-		case "greenhouse-ai":
-			errorMessage = "Dịch vụ AI nhà kính tạm thời không khả dụng"
-		default:
-			errorMessage = "Dịch vụ tạm thời không khả dụng"
-		}
-
-		w.Write([]byte(`{"error":"` + errorMessage + `", "details":"` + err.Error() + `"}`))
+		errorMsg := fmt.Sprintf(`{"error":"Service temporarily unavailable", "service":"%s", "details":"%s"}`,
+			serviceID, err.Error())
+		_, _ = w.Write([]byte(errorMsg))
 	}
 
-	// Custom modify response handler to handle CORS conflicts
+	// Modify response with minimal intervention
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		// Check if the backend has already added CORS headers despite our request
-		backendCORS := resp.Header.Get("Access-Control-Allow-Origin")
-
-		if backendCORS != "" {
-			// If backend added CORS headers, REMOVE them to prevent conflicts
-			logger.Debug("Removing backend CORS headers to prevent conflicts",
-				zap.String("backend_cors", backendCORS),
-				zap.String("path", resp.Request.URL.Path))
-
-			resp.Header.Del("Access-Control-Allow-Origin")
-			resp.Header.Del("Access-Control-Allow-Methods")
-			resp.Header.Del("Access-Control-Allow-Headers")
-			resp.Header.Del("Access-Control-Allow-Credentials")
-			resp.Header.Del("Access-Control-Expose-Headers")
-			resp.Header.Del("Access-Control-Max-Age")
-		}
-
-		// Add X-Proxied-By header
-		resp.Header.Set("X-Proxied-By", "API-Gateway")
-
-		logger.Debug("Response from backend",
+		logger.Debug("Response received from backend",
 			zap.String("service", serviceID),
 			zap.Int("status", resp.StatusCode),
-			zap.String("path_received_by_backend", resp.Request.URL.Path),
-			zap.String("target_url", target.String()),
-			zap.String("original_client_path", resp.Request.Header.Get("X-Original-Path")),
-			zap.String("method", resp.Request.Method),
+			zap.String("content_type", resp.Header.Get("Content-Type")),
+			zap.Int64("content_length", resp.ContentLength),
+			zap.Any("headers", resp.Header))
+		logger.Info("PROXY_MODIFY_RESPONSE", // INFO để dễ thấy
+			zap.String("service", serviceID),
+			zap.Int("backend_status_code", resp.StatusCode),
+			zap.String("backend_content_type", resp.Header.Get("Content-Type")),
+			zap.String("backend_content_length_header", resp.Header.Get("Content-Length")),
+			zap.Int64("backend_content_length_parsed", resp.ContentLength), // Do Go tự parse
+			zap.Strings("backend_transfer_encoding", resp.Header["Transfer-Encoding"]),
+			zap.Any("ALL_BACKEND_HEADERS", resp.Header), // Log tất cả các header từ backend
 		)
+
+		// Remove backend CORS headers to prevent conflicts
+		resp.Header.Del("Access-Control-Allow-Origin")
+		resp.Header.Del("Access-Control-Allow-Methods")
+		resp.Header.Del("Access-Control-Allow-Headers")
+		resp.Header.Del("Access-Control-Allow-Credentials")
+		resp.Header.Del("Access-Control-Expose-Headers")
+		resp.Header.Del("Access-Control-Max-Age")
+
+		// Add proxy identification
+		resp.Header.Set("X-Proxied-By", "API-Gateway")
 
 		return nil
 	}
 
-	// Điều chỉnh timeout dựa trên loại dịch vụ
-	var responseTimeout time.Duration
-	switch serviceID {
-	case "greenhouse-ai":
-		// Dịch vụ AI có thể cần nhiều thời gian hơn để xử lý
-		responseTimeout = 60 * time.Second
-	case "user-auth", "auth":
-		// Xác thực nên nhanh
-		responseTimeout = 15 * time.Second
-	default:
-		responseTimeout = 30 * time.Second
-	}
-
-	// Custom transport với timeouts để kiểm soát hành vi kết nối đến backend
+	// Configure transport with appropriate timeouts
 	proxy.Transport = &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
-		DisableCompression:    true,
-		ResponseHeaderTimeout: responseTimeout,
+		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConnsPerHost:   10,
+		DisableCompression:    false,
+		ResponseHeaderTimeout: getTimeoutForService(serviceID),
 	}
 
 	return &ServiceProxy{
@@ -266,21 +249,117 @@ func NewServiceProxy(targetURL string, serviceID string, logger *zap.Logger) (*S
 	}, nil
 }
 
+// isValidOrigin checks if the provided origin is allowed
+func isValidOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	// Add logic to validate against a list of allowed origins
+	// For example, use a configuration file or environment variable
+	allowedOrigins := []string{
+		"http://localhost:3000", // Example allowed origin
+		"https://example.com",
+	}
+	for _, allowed := range allowedOrigins {
+		if origin == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// getTimeoutForService returns appropriate timeout for each service
+func getTimeoutForService(serviceID string) time.Duration {
+	switch serviceID {
+	case "greenhouse-ai":
+		return 60 * time.Second
+	case "user-auth", "auth":
+		return 15 * time.Second
+	case "core-operation", "core-operations":
+		return 45 * time.Second
+	default:
+		return 30 * time.Second
+	}
+}
+
 // ServeHTTP handles the HTTP request by forwarding it through the reverse proxy
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Handle OPTIONS requests directly
 	if r.Method == "OPTIONS" {
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
-			w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, Origin, X-Request-ID")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
-		}
-		w.WriteHeader(http.StatusOK)
+		p.handleOptionsRequest(w, r)
 		return
 	}
 
+	// Ensure the ResponseWriter supports flushing
+	var flusher http.Flusher
+	if f, ok := w.(http.Flusher); !ok {
+		p.logger.Warn("ResponseWriter does not support flushing, wrapping it")
+		w = &flushResponseWriter{ResponseWriter: w}
+	} else {
+		flusher = f
+	}
+
+	// Forward the request
 	p.proxy.ServeHTTP(w, r)
+
+	// Flush if possible
+	if flusher != nil {
+		flusher.Flush()
+	}
 }
+
+// handleOptionsRequest handles CORS preflight requests
+func (p *ServiceProxy) handleOptionsRequest(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if isValidOrigin(origin) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, Origin, X-Request-ID")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// bufferPool implements httputil.BufferPool
+type bufferPool struct {
+	pool chan []byte
+}
+
+func newBufferPool() httputil.BufferPool {
+	return &bufferPool{
+		pool: make(chan []byte, 100),
+	}
+}
+
+func (bp *bufferPool) Get() []byte {
+	select {
+	case buf := <-bp.pool:
+		return buf
+	default:
+		return make([]byte, 32*1024) // 32KB buffer
+	}
+}
+
+func (bp *bufferPool) Put(buf []byte) {
+	select {
+	case bp.pool <- buf:
+	default:
+		// Log discarded buffers for observability
+		// Note: Avoid logging sensitive data in production
+	}
+}
+
+// flushResponseWriter wraps a ResponseWriter to support flushing
+type flushResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (f *flushResponseWriter) Flush() {
+	if flusher, ok := f.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Ensure flushResponseWriter implements http.Flusher
+var _ http.Flusher = &flushResponseWriter{}
